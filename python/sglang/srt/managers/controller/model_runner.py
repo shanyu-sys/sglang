@@ -35,6 +35,8 @@ from sglang.srt.utils import (
     monkey_patch_vllm_dummy_weight_loader,
     monkey_patch_vllm_p2p_access_check,
 )
+import gc
+import time
 
 logger = logging.getLogger("srt.model_runner")
 
@@ -101,6 +103,96 @@ class ModelRunner:
         # Capture cuda graphs
         self.init_cuda_graphs()
 
+    def replace_model(self, new_model_config, new_server_args):
+        '''
+        new_server_args: below fields need to be changed for the new model:
+            load_format, model_path, quantization, trust_remote_code, dtype
+        '''
+        begin = time.perf_counter()
+        ## swap out model
+        self.swap_out_model()
+        ## free memory pool
+        self.free_memory_pool()
+
+        ## load new model
+        self.load_new_model(new_server_args, new_model_config)
+
+        ## init memory pool
+        total_gpu_memory = get_available_gpu_memory(self.gpu_id, distributed=self.tp_size > 1)
+        self.init_memory_pool(total_gpu_memory)
+        end = time.perf_counter()
+        logger.info(f"[gpu_id={self.gpu_id}] Model Runner replace model time: {end - begin:.2f} s")
+
+    def swap_out_model(self):
+        """ swap out model """
+        # swap model in gpu to cpu, and then delete the model in gpu
+        begin_swap = time.perf_counter()
+        logger.info(f"[gpu_id={self.gpu_id}] Swap out model begin. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB")
+        self.model.to("cpu")
+        del self.model
+        self.model = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        end_swap = time.perf_counter()
+        logger.info(f"[gpu_id={self.gpu_id}] Swap out model end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB")
+        logger.info(f"[gpu_id={self.gpu_id}] Swap out model time: {end_swap - begin_swap:.2f} s")
+
+    def free_memory_pool(self):
+        begin_free = time.perf_counter()
+        self.req_to_token_pool.empty()
+        self.token_to_kv_pool.empty()
+        del self.req_to_token_pool
+        del self.token_to_kv_pool
+        gc.collect()
+        torch.cuda.empty_cache()
+        end_free = time.perf_counter()
+        logger.info(f"[gpu_id={self.gpu_id}] Free memory pool end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB")
+        logger.info(f"[gpu_id={self.gpu_id}] Free memory pool time: {end_free - begin_free:.2f} s")
+
+    def load_new_model(self, new_server_args, new_model_config):
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Load weight for new model begin. "
+            f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+        )
+        begin_load = time.perf_counter()
+        self.server_args = new_server_args
+        self.model_config = new_model_config
+
+        device_config = DeviceConfig()
+        load_config = LoadConfig(load_format=new_server_args.load_format)
+        vllm_model_config = VllmModelConfig(
+            model=new_server_args.model_path,
+            quantization=new_server_args.quantization,
+            tokenizer=None,
+            tokenizer_mode=None,
+            trust_remote_code=new_server_args.trust_remote_code,
+            dtype=new_server_args.dtype,
+            seed=42,
+            skip_tokenizer_init=True,
+        )
+        self.dtype = vllm_model_config.dtype
+        if new_model_config.model_overide_args is not None:
+            vllm_model_config.hf_config.update(new_model_config.model_overide_args)
+
+        self.model = get_model(
+            model_config=vllm_model_config,
+            device_config=device_config,
+            load_config=load_config,
+            lora_config=None,
+            multimodal_config=None,
+            parallel_config=None,
+            scheduler_config=None,
+            cache_config=None,
+        )
+        end_load = time.perf_counter()
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Load new model weight end. "
+            f"type={type(self.model).__name__}, "
+            f"dtype={self.dtype}, "
+            f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+        )
+        logger.info(f"[gpu_id={self.gpu_id}] Load new model time: {end_load - begin_load:.2f} s")
+
     def load_model(self):
         logger.info(
             f"[gpu_id={self.gpu_id}] Load weight begin. "
@@ -160,6 +252,7 @@ class ModelRunner:
         return max_num_token
 
     def init_memory_pool(self, total_gpu_memory):
+        begin_init = time.perf_counter()
         self.max_total_num_tokens = self.profile_max_num_token(total_gpu_memory)
 
         if self.max_total_num_tokens <= 0:
@@ -181,10 +274,12 @@ class ModelRunner:
             head_dim=self.model_config.head_dim,
             layer_num=self.model_config.num_hidden_layers,
         )
+        end_init = time.perf_counter()
         logger.info(
             f"[gpu_id={self.gpu_id}] Memory pool end. "
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )
+        logger.info(f"[gpu_id={self.gpu_id}] Init memory pool time: {end_init - begin_init:.2f} s")
 
     def init_cublas(self):
         """We need to run a small matmul to init cublas. Otherwise, it will raise some errors later."""

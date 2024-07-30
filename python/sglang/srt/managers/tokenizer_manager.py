@@ -28,6 +28,7 @@ from sglang.srt.managers.io_struct import (
     FlushCacheReq,
     GenerateReqInput,
     TokenizedGenerateReqInput,
+    ReplaceModelReqInput,
 )
 from sglang.srt.mm_utils import expand2square, process_anyres_image
 from sglang.srt.sampling_params import SamplingParams
@@ -93,6 +94,47 @@ class TokenizerManager:
 
         self.to_create_loop = True
         self.rid_to_state: Dict[str, ReqState] = {}
+
+    def replace_tokenizer(self, replace_model_req: ReplaceModelReqInput):
+        self.model_path = replace_model_req.model_path
+        self.server_args = ServerArgs(
+            model_path=replace_model_req.model_path,
+            tokenizer_path=replace_model_req.tokenizer_path,
+            tokenizer_mode=replace_model_req.tokenizer_mode,
+            load_format=replace_model_req.load_format,
+            dtype=replace_model_req.dtype,
+            trust_remote_code=replace_model_req.trust_remote_code,
+            context_length=replace_model_req.context_length,
+            quantization=replace_model_req.quantization,
+            chat_template=replace_model_req.chat_template,
+        )
+
+        self.hf_config = get_config(
+            self.model_path,
+            trust_remote_code=self.server_args.trust_remote_code,
+            model_overide_args=replace_model_req.model_overide_args,
+        )
+        self.context_len = get_context_length(self.hf_config)
+
+        if is_multimodal_model(self.model_path):
+            self.processor = get_processor(
+                self.server_args.tokenizer_path,
+                tokenizer_mode=self.server_args.tokenizer_mode,
+                trust_remote_code=self.server_args.trust_remote_code,
+            )
+            self.tokenizer = self.processor.tokenizer
+            os.environ["TOKENIZERS_PARALLELISM"] = "false"
+            self.executor = concurrent.futures.ProcessPoolExecutor(
+                initializer=init_global_processor,
+                mp_context=mp.get_context("fork"),
+                initargs=(self.server_args,),
+            )
+        else:
+            self.tokenizer = get_tokenizer(
+                self.server_args.tokenizer_path,
+                tokenizer_mode=self.server_args.tokenizer_mode,
+                trust_remote_code=self.server_args.trust_remote_code,
+            )
 
     async def get_pixel_values(self, image_data):
         aspect_ratio = getattr(self.hf_config, "image_aspect_ratio", None)

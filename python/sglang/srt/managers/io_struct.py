@@ -140,3 +140,21 @@ class AbortReq:
 @dataclass
 class DetokenizeReqInput:
     input_ids: List[int]
+
+
+@dataclass
+class ReplaceModelReqInput:
+    # Model and tokenizer
+    model_path: str
+    tokenizer_path: Optional[str] = None
+    tokenizer_mode: str = "auto"
+    load_format: str = "auto"
+    dtype: str = "auto"
+    trust_remote_code: bool = True
+    context_length: Optional[int] = None
+    quantization: Optional[str] = None
+    chat_template: Optional[str] = None
+
+    model_overide_args: Optional[Dict] = None
+
+    # More to add (TBD)

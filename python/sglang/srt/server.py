@@ -37,7 +37,7 @@ from sglang.srt.managers.controller.manager_single import (
     start_controller_process as start_controller_process_single,
 )
 from sglang.srt.managers.detokenizer_manager import start_detokenizer_process
-from sglang.srt.managers.io_struct import GenerateReqInput
+from sglang.srt.managers.io_struct import GenerateReqInput, ReplaceModelReqInput
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
 from sglang.srt.openai_api_adapter import (
     load_chat_template_for_openai_api,
@@ -65,6 +65,11 @@ tokenizer_manager = None
 # Put some args for easily access
 global_server_args_dict = {}
 
+# for replace model
+# In-memory store to manage ongoing generation requests and block new ones during replacement
+ongoing_requests = set()
+model_replacement_in_progress = asyncio.Event()
+pending_requests = []
 
 @app.get("/health")
 async def health() -> Response:
@@ -96,6 +101,16 @@ async def flush_cache():
 
 
 async def generate_request(obj: GenerateReqInput, request: Request):
+    while model_replacement_in_progress.is_set():
+        await asyncio.sleep(0.1)
+
+    # if model_replacement_in_progress.is_set():
+    #     pending_requests.append((obj, request))
+    #     return JSONResponse(
+    #         {"message": "Model replacement in progress, your request will be processed shortly."},
+    #         status_code=HTTPStatus.ACCEPTED
+    #     )
+
     """Handle a generate request."""
     if obj.stream:
 
@@ -114,6 +129,8 @@ async def generate_request(obj: GenerateReqInput, request: Request):
             background=tokenizer_manager.create_abort_task(obj),
         )
     else:
+        generate_req_id = id(obj)
+        ongoing_requests.add(generate_req_id)
         try:
             ret = await tokenizer_manager.generate_request(obj, request).__anext__()
             return ret
@@ -121,10 +138,64 @@ async def generate_request(obj: GenerateReqInput, request: Request):
             return JSONResponse(
                 {"error": {"message": str(e)}}, status_code=HTTPStatus.BAD_REQUEST
             )
+        finally:
+            ongoing_requests.remove(generate_req_id)
 
 
 app.post("/generate")(generate_request)
 app.put("/generate")(generate_request)
+
+
+@app.post("/replace_model")
+async def replace_model(obj: ReplaceModelReqInput, request: Request):
+    if model_replacement_in_progress.is_set():
+        return JSONResponse(
+            {"message": "Model replacement in progress, please try again later."},
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE
+        )
+
+    model_replacement_in_progress.set()
+    start = time.perf_counter()
+    await wait_for_ongoing_requests()
+    print(f"waiting for ongoing requests takes {time.perf_counter() - start:.2f} seconds")
+
+    try:
+        # replace model and tokenizer
+        replace_model_tokenizer(obj)
+
+        return JSONResponse(
+            {"message": "Model replaced successfully."},
+            status_code=HTTPStatus.OK
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            {"error": {"message": str(e)}},
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR
+        )
+    finally:
+        model_replacement_in_progress.clear()
+
+
+def replace_model_tokenizer(obj: ReplaceModelReqInput):
+    # tokenizer_manager.replace_model(obj)
+    print("Replacing model ...")
+    print("New model path:", obj.model_path)
+    print("New tokenizer path:", obj.tokenizer_path)
+
+    # replace tokenizer in tokenizer_manager
+    st = time.perf_counter()
+    tokenizer_manager.replace_tokenizer(obj)
+    print("tokenizer_manager replaced tokenizer successfully. Takes {:.2f} seconds".format(time.perf_counter() - st))
+
+    # send replace model request to router
+    tokenizer_manager.send_to_router.send_pyobj(obj)
+
+
+async def wait_for_ongoing_requests():
+    print(f"waiting for {len(ongoing_requests)} ongoing requests to finish ...")
+    while ongoing_requests:
+        await asyncio.sleep(0.1)
 
 
 @app.post("/v1/completions")

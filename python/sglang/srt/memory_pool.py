@@ -3,6 +3,7 @@
 import logging
 
 import torch
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,12 @@ class ReqToTokenPool:
         self.mem_state.fill_(True)
         self.can_use_mem_size = len(self.mem_state)
 
+    def empty(self):
+        # free the gpu memory allocated by the pool
+        self.mem_state = None
+        self.req_to_token = None
+        gc.collect()
+        torch.cuda.empty_cache()
 
 class TokenToKVPool:
     """A memory pool that maps a token to its kv cache locations"""
@@ -116,3 +123,11 @@ class TokenToKVPool:
 
         # We also add one slot. This slot is used for writing dummy output from padded tokens.
         self.mem_state[0] = False
+
+    def empty(self):
+        # free the gpu memory allocated by the pool
+        self.mem_state = None
+        self.kv_data = None
+        self.prefetch_buffer = None
+        gc.collect()
+        torch.cuda.empty_cache()

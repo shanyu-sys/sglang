@@ -29,6 +29,7 @@ from sglang.srt.managers.io_struct import (
     BatchTokenIDOut,
     FlushCacheReq,
     TokenizedGenerateReqInput,
+    ReplaceModelReqInput
 )
 from sglang.srt.model_config import ModelConfig
 from sglang.srt.server_args import ServerArgs
@@ -183,6 +184,11 @@ class ModelTpServer:
                     self.flush_cache()
                 elif isinstance(recv_req, AbortReq):
                     self.abort_request(recv_req)
+                elif isinstance(recv_req, ReplaceModelReqInput):
+                    assert not self.has_unfinished_requests()
+                    # while not self.has_unfinished_requests():
+                    #     self.forward_step()
+                    self.replace_model_tokenizer(recv_req)
                 else:
                     raise ValueError(f"Invalid request: {recv_req}")
 
@@ -196,6 +202,131 @@ class ModelTpServer:
         ret = self.out_pyobjs
         self.out_pyobjs = []
         return ret
+
+    def replace_model_tokenizer(self, replace_model_req: ReplaceModelReqInput):
+        begin_replace = time.perf_counter()
+        server_args = ServerArgs(
+            model_path=replace_model_req.model_path,
+            tokenizer_path=replace_model_req.tokenizer_path,
+            tokenizer_mode=replace_model_req.tokenizer_mode,
+            load_format=replace_model_req.load_format,
+            dtype=replace_model_req.dtype,
+            trust_remote_code=replace_model_req.trust_remote_code,
+            context_length=replace_model_req.context_length,
+            quantization=replace_model_req.quantization,
+            chat_template=replace_model_req.chat_template,
+        )
+        self.model_config = ModelConfig(
+            server_args.model_path,
+            server_args.trust_remote_code,
+            context_length=server_args.context_length,
+            model_overide_args=replace_model_req.model_overide_args,
+        )
+        self.model_runner.replace_model(
+            new_model_config=self.model_config,
+            new_server_args=server_args,
+        )
+
+        if is_multimodal_model(server_args.model_path):
+            self.processor = get_processor(
+                server_args.tokenizer_path,
+                tokenizer_mode=server_args.tokenizer_mode,
+                trust_remote_code=server_args.trust_remote_code,
+            )
+            self.tokenizer = self.processor.tokenizer
+        else:
+            self.tokenizer = get_tokenizer(
+                server_args.tokenizer_path,
+                tokenizer_mode=server_args.tokenizer_mode,
+                trust_remote_code=server_args.trust_remote_code,
+            )
+        self.max_total_num_tokens = self.model_runner.max_total_num_tokens
+        self.max_prefill_tokens = (
+            16384
+            if server_args.max_prefill_tokens is None
+            else server_args.max_prefill_tokens
+        )
+        self.max_running_requests = (
+            self.max_total_num_tokens // 2
+            if server_args.max_running_requests is None
+            else server_args.max_running_requests
+        )
+        self.int_token_logit_bias = torch.tensor(
+            get_int_token_logit_bias(self.tokenizer, self.model_config.vocab_size)
+        )
+        set_random_seed(server_args.random_seed)
+
+        # Print info
+        logger.info(
+            f"[gpu_id={self.gpu_id}] "
+            f"max_total_num_tokens={self.max_total_num_tokens}, "
+            f"max_prefill_tokens={self.max_prefill_tokens}, "
+            f"context_len={self.model_config.context_len}"
+        )
+        if self.tp_rank == 0:
+            logger.info(
+                f"[gpu_id={self.gpu_id}] "
+                f"server_args: {server_args.print_mode_args()}"
+            )
+
+        # Init cache
+        self.tree_cache = RadixCache(
+            req_to_token_pool=self.model_runner.req_to_token_pool,
+            token_to_kv_pool=self.model_runner.token_to_kv_pool,
+            disable=server_args.disable_radix_cache,
+        )
+        self.tree_cache_metrics = {"total": 0, "hit": 0}
+        self.scheduler = ScheduleHeuristic(
+            self.schedule_heuristic,
+            self.max_running_requests,
+            self.max_prefill_tokens,
+            self.max_total_num_tokens,
+            self.tree_cache,
+        )
+        self.req_to_token_pool = self.model_runner.req_to_token_pool
+        self.token_to_kv_pool = self.model_runner.token_to_kv_pool
+
+        # Init running status
+        self.forward_queue: List[Req] = []
+        self.running_batch: Batch = None
+        self.out_pyobjs = []
+        self.decode_forward_ct = 0
+        self.stream_interval = server_args.stream_interval
+        self.num_generated_tokens = 0
+        self.last_stats_tic = time.time()
+
+        # Init the FSM cache for constrained generation
+        self.regex_fsm_cache = FSMCache(
+            server_args.tokenizer_path,
+            {
+                "tokenizer_mode": server_args.tokenizer_mode,
+                "trust_remote_code": server_args.trust_remote_code,
+            },
+        )
+        self.jump_forward_cache = JumpForwardCache()
+
+        # Init new token estimation
+        assert (
+            server_args.schedule_conservativeness >= 0
+        ), "Invalid schedule_conservativeness"
+        self.new_token_ratio = min(
+            global_config.base_new_token_ratio * server_args.schedule_conservativeness,
+            1.0,
+        )
+        self.min_new_token_ratio = min(
+            global_config.base_min_new_token_ratio
+            * server_args.schedule_conservativeness,
+            1.0,
+        )
+        self.new_token_ratio_decay = global_config.new_token_ratio_decay
+        self.new_token_ratio_recovery = global_config.new_token_ratio_recovery
+        end = time.perf_counter()
+        logger.info(f"ModelTPServer replace_model_tokenizer time: {end - begin_replace:.4f}s")
+
+    def has_unfinished_requests(self):
+        return len(self.forward_queue) > 0 or (
+            self.running_batch is not None and not self.running_batch.is_empty()
+        )
 
     @torch.inference_mode()
     def forward_step(self):
