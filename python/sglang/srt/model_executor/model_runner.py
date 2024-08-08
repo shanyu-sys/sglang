@@ -94,6 +94,7 @@ class ModelRunner:
                 "enable_mla": server_args.enable_mla,
             }
         )
+        self.model_path = model_config.path
 
         # Init torch distributed
         torch.cuda.set_device(self.gpu_id)
@@ -149,7 +150,7 @@ class ModelRunner:
         device_config = DeviceConfig()
         load_config = LoadConfig(load_format=self.server_args.load_format)
         vllm_model_config = VllmModelConfig(
-            model=self.server_args.model_path,
+            model=self.model_path,
             quantization=self.server_args.quantization,
             tokenizer=None,
             tokenizer_mode=None,
@@ -171,7 +172,7 @@ class ModelRunner:
 
         if (
             self.server_args.efficient_weight_load
-            and "llama" in self.server_args.model_path.lower()
+            and "llama" in self.model_path.lower()
             and self.server_args.quantization == "fp8"
         ):
             from sglang.srt.model_loader.model_loader import get_model

@@ -165,22 +165,31 @@ def is_port_available(port):
             return False
 
 
+def alloc_can_use_network_port(num=5, used_nccl_port=None):
+    port_list = []
+    for port in range(10000, 65536):
+        if is_port_available(port):
+            port_list.append(port)
+            if len(port_list) == num:
+                return port_list
+    return None
+
 def allocate_init_ports(
     port: Optional[int] = None,
-    additional_ports: Optional[List[int]] = None,
+    num_models: int = 1,
     dp_size: int = 1,
 ):
+    assert dp_size == 1
     """Allocate ports for all connections."""
-    if additional_ports:
-        ret_ports = [port] + additional_ports
-    else:
-        ret_ports = [port]
+    ret_ports = [port]
 
     ret_ports = list(set(x for x in ret_ports if is_port_available(x)))
     cur_port = ret_ports[-1] + 1 if len(ret_ports) > 0 else 10000
 
     # HTTP + Tokenizer + Controller + Detokenizer + dp_size * 1 (nccl)
-    num_ports_needed = 4 + dp_size
+    # num_ports_needed = 4 + dp_size
+    num_ports_per_model = 3 + dp_size
+    num_ports_needed = (3 + dp_size) * num_models + 1
     while len(ret_ports) < num_ports_needed:
         if cur_port not in ret_ports and is_port_available(cur_port):
             ret_ports.append(cur_port)
@@ -190,8 +199,11 @@ def allocate_init_ports(
         logger.warn(
             f"WARNING: Port {port} is not available. Use port {ret_ports[0]} instead."
         )
+    each_model_ports = [
+        ret_ports[i : i + num_ports_per_model] for i in range(1, len(ret_ports), num_ports_per_model)
+    ]
 
-    return ret_ports[0], ret_ports[1:num_ports_needed]
+    return ret_ports[0], each_model_ports
 
 
 def get_int_token_logit_bias(tokenizer, vocab_size):

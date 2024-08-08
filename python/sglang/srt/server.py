@@ -84,7 +84,8 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 
 app = FastAPI()
-tokenizer_manager = None
+# mapping from model_name to tokenizer_manager
+tokenizer_managers = None
 
 
 @app.get("/health")
@@ -96,19 +97,21 @@ async def health() -> Response:
 @app.get("/get_model_info")
 async def get_model_info():
     result = {
-        "model_path": tokenizer_manager.model_path,
+        "model_paths": [tm.model_path for tm in tokenizer_managers.values()],
     }
     return result
 
 
 @app.get("/get_server_args")
 async def get_server_args():
+    # the server_args in any of the tokenizer_managers
+    tokenizer_manager = next(iter(tokenizer_managers.values()))
     return dataclasses.asdict(tokenizer_manager.server_args)
-
 
 @app.get("/flush_cache")
 async def flush_cache():
-    tokenizer_manager.flush_cache()
+    for tokenizer_manager in tokenizer_managers.values():
+        tokenizer_manager.flush_cache()
     return Response(
         content="Cache flushed.\nPlease check backend logs for more details. "
         "(When there are running or waiting requests, the operation will not be performed.)\n",
@@ -118,6 +121,8 @@ async def flush_cache():
 
 async def generate_request(obj: GenerateReqInput, request: Request):
     """Handle a generate request."""
+    model = obj.model
+    tokenizer_manager = tokenizer_managers[model]
     if obj.stream:
 
         async def stream_results():
@@ -148,62 +153,13 @@ app.post("/generate")(generate_request)
 app.put("/generate")(generate_request)
 
 
-@app.post("/v1/completions")
-async def openai_v1_completions(raw_request: Request):
-    return await v1_completions(tokenizer_manager, raw_request)
-
-
-@app.post("/v1/chat/completions")
-async def openai_v1_chat_completions(raw_request: Request):
-    return await v1_chat_completions(tokenizer_manager, raw_request)
-
-
-@app.get("/v1/models")
-def available_models():
-    """Show available models."""
-    served_model_names = [tokenizer_manager.served_model_name]
-    model_cards = []
-    for served_model_name in served_model_names:
-        model_cards.append(ModelCard(id=served_model_name, root=served_model_name))
-    return ModelList(data=model_cards)
-
-
-@app.post("/v1/files")
-async def openai_v1_files(file: UploadFile = File(...), purpose: str = Form("batch")):
-    return await v1_files_create(
-        file, purpose, tokenizer_manager.server_args.file_storage_pth
-    )
-
-
-@app.post("/v1/batches")
-async def openai_v1_batches(raw_request: Request):
-    return await v1_batches(tokenizer_manager, raw_request)
-
-
-@app.get("/v1/batches/{batch_id}")
-async def retrieve_batch(batch_id: str):
-    return await v1_retrieve_batch(batch_id)
-
-
-@app.get("/v1/files/{file_id}")
-async def retrieve_file(file_id: str):
-    # https://platform.openai.com/docs/api-reference/files/retrieve
-    return await v1_retrieve_file(file_id)
-
-
-@app.get("/v1/files/{file_id}/content")
-async def retrieve_file_content(file_id: str):
-    # https://platform.openai.com/docs/api-reference/files/retrieve-contents
-    return await v1_retrieve_file_content(file_id)
-
-
 def launch_server(
     server_args: ServerArgs,
     model_overide_args: Optional[dict] = None,
     pipe_finish_writer: Optional[mp.connection.Connection] = None,
 ):
     """Launch an HTTP server."""
-    global tokenizer_manager
+    global tokenizer_managers
 
     logging.basicConfig(
         level=getattr(logging, server_args.log_level.upper()),
@@ -214,84 +170,106 @@ def launch_server(
     _set_envs_and_config(server_args)
 
     # Allocate ports
-    server_args.port, server_args.additional_ports = allocate_init_ports(
+    num_models = len(server_args.model_paths)
+
+    server_args.port, each_model_ports = allocate_init_ports(
         server_args.port,
-        server_args.additional_ports,
+        num_models,
         server_args.dp_size,
     )
-    ports = server_args.additional_ports
-    port_args = PortArgs(
-        tokenizer_port=ports[0],
-        controller_port=ports[1],
-        detokenizer_port=ports[2],
-        nccl_ports=ports[3:],
-    )
-    logger.info(f"{server_args=}")
+    port_args_list = []
+    for i in range(num_models):
+        ports = each_model_ports[i]
+        port_args = PortArgs(
+            tokenizer_port=ports[0],
+            controller_port=ports[1],
+            detokenizer_port=ports[2],
+            nccl_ports=ports[3:],
+        )
+        port_args_list.append(port_args)
 
-    # Launch processes for multi-node tensor parallelism
-    if server_args.nnodes > 1:
-        if server_args.node_rank != 0:
-            tp_size_local = server_args.tp_size // server_args.nnodes
-            gpu_ids = [
-                i for _ in range(server_args.nnodes) for i in range(tp_size_local)
-            ]
-            tp_rank_range = list(
-                range(
-                    server_args.node_rank * tp_size_local,
-                    (server_args.node_rank + 1) * tp_size_local,
-                )
-            )
-            procs = launch_tp_servers(
-                gpu_ids,
-                tp_rank_range,
-                server_args,
-                ports[3],
-                model_overide_args,
-            )
-            while True:
-                pass
+
+    assert server_args.nnodes == 1, "Multi-node tensor parallelism is not supported yet."
+    # # Launch processes for multi-node tensor parallelism
+    # if server_args.nnodes > 1:
+    #     if server_args.node_rank != 0:
+    #         tp_size_local = server_args.tp_size // server_args.nnodes
+    #         gpu_ids = [
+    #             i for _ in range(server_args.nnodes) for i in range(tp_size_local)
+    #         ]
+    #         tp_rank_range = list(
+    #             range(
+    #                 server_args.node_rank * tp_size_local,
+    #                 (server_args.node_rank + 1) * tp_size_local,
+    #             )
+    #         )
+    #         procs = launch_tp_servers(
+    #             gpu_ids,
+    #             tp_rank_range,
+    #             server_args,
+    #             ports[3],
+    #             model_overide_args,
+    #         )
+    #         while True:
+    #             pass
 
     # Launch processes
-    tokenizer_manager = TokenizerManager(server_args, port_args, model_overide_args)
-    pipe_controller_reader, pipe_controller_writer = mp.Pipe(duplex=False)
-    pipe_detoken_reader, pipe_detoken_writer = mp.Pipe(duplex=False)
+    pipe_controller_list = []
+    pipe_detoken_list = []
+    proc_controller_list = []
+    proc_detoken_list = []
+    for i, model in enumerate(server_args.model_paths):
+        port_args = port_args_list[i]
+        tokenizer_manager = TokenizerManager(i, server_args, port_args, model_overide_args)
+        tokenizer_managers[model] = tokenizer_manager
+        pipe_controller_reader, pipe_controller_writer = mp.Pipe(duplex=False)
+        pipe_detoken_reader, pipe_detoken_writer = mp.Pipe(duplex=False)
 
-    if server_args.dp_size == 1:
-        start_process = start_controller_process_single
-    else:
-        start_process = start_controller_process_multi
-    proc_controller = mp.Process(
-        target=start_process,
-        args=(server_args, port_args, pipe_controller_writer, model_overide_args),
-    )
-    proc_controller.start()
-    proc_detoken = mp.Process(
-        target=start_detokenizer_process,
-        args=(
-            server_args,
-            port_args,
-            pipe_detoken_writer,
-        ),
-    )
-    proc_detoken.start()
+        pipe_controller_list.append((pipe_controller_reader, pipe_controller_writer))
+        pipe_detoken_list.append((pipe_detoken_reader, pipe_detoken_writer))
 
-    # Wait for the model to finish loading
-    controller_init_state = pipe_controller_reader.recv()
-    detoken_init_state = pipe_detoken_reader.recv()
-
-    if controller_init_state != "init ok" or detoken_init_state != "init ok":
-        proc_controller.kill()
-        proc_detoken.kill()
-        print(
-            f"Initialization failed. controller_init_state: {controller_init_state}",
-            flush=True,
+        if server_args.dp_size == 1:
+            start_process = start_controller_process_single
+        else:
+            start_process = start_controller_process_multi
+        proc_controller = mp.Process(
+            target=start_process,
+            args=(i, server_args, port_args, pipe_controller_writer, model_overide_args),
         )
-        print(
-            f"Initialization failed. detoken_init_state: {detoken_init_state}",
-            flush=True,
+        proc_controller.start()
+        proc_detoken = mp.Process(
+            target=start_detokenizer_process,
+            args=(
+                i,
+                server_args,
+                port_args,
+                pipe_detoken_writer,
+            ),
         )
-        sys.exit(1)
-    assert proc_controller.is_alive() and proc_detoken.is_alive()
+        proc_detoken.start()
+
+        proc_controller_list.append(proc_controller)
+        proc_detoken_list.append(proc_detoken)
+
+        # Wait for the model to finish loading
+        controller_init_state = pipe_controller_reader.recv()
+        detoken_init_state = pipe_detoken_reader.recv()
+
+        if controller_init_state != "init ok" or detoken_init_state != "init ok":
+            proc_controller.kill()
+            proc_detoken.kill()
+            print(
+                f"Initialization failed. controller_init_state: {controller_init_state}",
+                flush=True,
+            )
+            print(
+                f"Initialization failed. detoken_init_state: {detoken_init_state}",
+                flush=True,
+            )
+            sys.exit(1)
+
+    for proc_controller, proc_detoken in zip(proc_controller_list, proc_detoken_list):
+        assert proc_controller.is_alive() and proc_detoken.is_alive()
 
     # Add api key authorization
     if server_args.api_key:
@@ -378,19 +356,21 @@ def _wait_and_warmup(server_args, pipe_finish_writer):
     # Send a warmup request
     try:
         for _ in range(server_args.dp_size):
-            res = requests.post(
-                url + "/generate",
-                json={
-                    "text": "The capital city of France is",
-                    "sampling_params": {
-                        "temperature": 0,
-                        "max_new_tokens": 8,
+            for i in range(len(server_args.model_paths)):
+                res = requests.post(
+                    url + "/generate",
+                    json={
+                        "text": "The capital city of France is",
+                        "sampling_params": {
+                            "temperature": 0,
+                            "max_new_tokens": 8,
+                        },
+                        "model": server_args.model_paths[i],
                     },
-                },
-                headers=headers,
-                timeout=600,
-            )
-            assert res.status_code == 200
+                    headers=headers,
+                    timeout=600,
+                )
+                assert res.status_code == 200
     except Exception as e:
         if pipe_finish_writer is not None:
             pipe_finish_writer.send(get_exception_traceback())
@@ -462,19 +442,24 @@ class Runtime:
     def cache_prefix(self, prefix: str):
         self.endpoint.cache_prefix(prefix)
 
-    def get_tokenizer(self):
-        return get_tokenizer(
-            self.server_args.tokenizer_path,
-            tokenizer_mode=self.server_args.tokenizer_mode,
-            trust_remote_code=self.server_args.trust_remote_code,
-        )
+    def get_tokenizers(self):
+        tokenizers = []
+        for tokenizer_path in self.server_args.tokenizer_paths:
+            tokenizer = get_tokenizer(
+                self.server_args.tokenizer_path,
+                tokenizer_mode=self.server_args.tokenizer_mode,
+                trust_remote_code=self.server_args.trust_remote_code,
+            )
+        tokenizers.append(tokenizer)
 
     async def async_generate(
         self,
+        model: str,
         prompt: str,
         sampling_params: Optional[Dict] = None,
     ):
         json_data = {
+            "model": model,
             "text": prompt,
             "sampling_params": sampling_params,
             "stream": True,
@@ -500,11 +485,13 @@ class Runtime:
     def generate(
         self,
         prompt: str,
+        model: str,
         sampling_params: Optional[Dict] = None,
         return_logprob: Optional[Union[List[bool], bool]] = False,
         top_logprobs_num: Optional[Union[List[int], int]] = None,
     ):
         json_data = {
+            "model": model,
             "text": prompt,
             "sampling_params": sampling_params,
             "return_logprob": return_logprob,

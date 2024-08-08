@@ -65,6 +65,7 @@ class ReqState:
 class TokenizerManager:
     def __init__(
         self,
+        index: int,
         server_args: ServerArgs,
         port_args: PortArgs,
         model_overide_args: dict = None,
@@ -78,8 +79,8 @@ class TokenizerManager:
         self.send_to_router = context.socket(zmq.PUSH)
         self.send_to_router.connect(f"tcp://127.0.0.1:{port_args.controller_port}")
 
-        self.model_path = server_args.model_path
-        self.served_model_name = server_args.served_model_name
+        self.model_path = server_args.model_paths[index]
+        self.served_model_name = server_args.served_model_names[index]
         self.hf_config = get_config(
             self.model_path,
             trust_remote_code=server_args.trust_remote_code,
@@ -93,7 +94,7 @@ class TokenizerManager:
 
         if is_multimodal_model(self.model_path):
             self.processor = get_processor(
-                server_args.tokenizer_path,
+                server_args.tokenizer_paths[index],
                 tokenizer_mode=server_args.tokenizer_mode,
                 trust_remote_code=server_args.trust_remote_code,
             )
@@ -102,11 +103,11 @@ class TokenizerManager:
             self.executor = concurrent.futures.ProcessPoolExecutor(
                 initializer=init_global_processor,
                 mp_context=mp.get_context("fork"),
-                initargs=(server_args,),
+                initargs=(server_args, index,),
             )
         else:
             self.tokenizer = get_tokenizer(
-                server_args.tokenizer_path,
+                server_args.tokenizer_paths[index],
                 tokenizer_mode=server_args.tokenizer_mode,
                 trust_remote_code=server_args.trust_remote_code,
             )
@@ -534,11 +535,11 @@ class TokenizerManager:
 global global_processor
 
 
-def init_global_processor(server_args: ServerArgs):
+def init_global_processor(server_args: ServerArgs, index: int):
     global global_processor
     transformers.logging.set_verbosity_error()
     global_processor = get_processor(
-        server_args.tokenizer_path,
+        server_args.tokenizer_paths[index],
         tokenizer_mode=server_args.tokenizer_mode,
         trust_remote_code=server_args.trust_remote_code,
     )

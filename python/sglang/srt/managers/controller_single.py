@@ -39,6 +39,7 @@ class ControllerSingle:
 
     def __init__(
         self,
+        model_index: int,
         server_args: ServerArgs,
         port_args: PortArgs,
         model_overide_args: dict,
@@ -48,6 +49,7 @@ class ControllerSingle:
         mp_queue: multiprocessing.Queue,
     ):
         # Parse args
+        self.model_index = model_index
         self.tp_size = server_args.tp_size
         self.is_dp_worker = is_data_parallel_worker
         self.dp_worker_id = dp_worker_id
@@ -73,6 +75,7 @@ class ControllerSingle:
         if tp_size_local > 1:
             tp_rank_range = range(1, tp_size_local)
             self.tp_procs = launch_tp_servers(
+                model_index,
                 gpu_ids,
                 tp_rank_range,
                 server_args,
@@ -82,6 +85,7 @@ class ControllerSingle:
 
         # Launch tp rank 0
         self.tp_server = ModelTpServer(
+            model_index,
             gpu_ids[0],
             0,
             server_args,
@@ -124,6 +128,7 @@ class ControllerSingle:
 
 
 def start_controller_process(
+    model_index: int,
     server_args: ServerArgs,
     port_args: PortArgs,
     pipe_writer: multiprocessing.connection.Connection,
@@ -148,6 +153,7 @@ def start_controller_process(
 
     try:
         controller = ControllerSingle(
+            model_index,
             server_args,
             port_args,
             model_overide_args,

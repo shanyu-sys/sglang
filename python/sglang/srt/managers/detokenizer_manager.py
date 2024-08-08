@@ -45,6 +45,7 @@ class DecodeStatus:
 class DetokenizerManager:
     def __init__(
         self,
+        model_index: int,
         server_args: ServerArgs,
         port_args: PortArgs,
     ):
@@ -56,7 +57,7 @@ class DetokenizerManager:
         self.send_to_tokenizer.connect(f"tcp://127.0.0.1:{port_args.tokenizer_port}")
 
         self.tokenizer = get_tokenizer(
-            server_args.tokenizer_path,
+            server_args.tokenizer_paths[model_index],
             tokenizer_mode=server_args.tokenizer_mode,
             trust_remote_code=server_args.trust_remote_code,
         )
@@ -136,6 +137,7 @@ class DetokenizerManager:
 
 
 def start_detokenizer_process(
+    model_index: int,
     server_args: ServerArgs,
     port_args: PortArgs,
     pipe_writer,
@@ -143,7 +145,7 @@ def start_detokenizer_process(
     graceful_registry(inspect.currentframe().f_code.co_name)
 
     try:
-        manager = DetokenizerManager(server_args, port_args)
+        manager = DetokenizerManager(model_index, server_args, port_args)
     except Exception:
         pipe_writer.send(get_exception_traceback())
         raise

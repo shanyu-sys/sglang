@@ -24,15 +24,15 @@ from typing import List, Optional, Union
 @dataclasses.dataclass
 class ServerArgs:
     # Model and tokenizer
-    model_path: str
-    tokenizer_path: Optional[str] = None
+    model_paths: List[str]
+    tokenizer_paths: Optional[List[str]] = None
     tokenizer_mode: str = "auto"
     load_format: str = "auto"
     dtype: str = "auto"
     trust_remote_code: bool = True
     context_length: Optional[int] = None
     quantization: Optional[str] = None
-    served_model_name: Optional[str] = None
+    served_model_names: Optional[List[str]] = None
     chat_template: Optional[str] = None
 
     # Port
@@ -41,7 +41,7 @@ class ServerArgs:
     additional_ports: Optional[Union[List[int], int]] = None
 
     # Memory and scheduling
-    mem_fraction_static: Optional[float] = None
+    mem_fraction_statics: Optional[List[float]] = None
     max_prefill_tokens: Optional[int] = None
     max_running_requests: Optional[int] = None
     max_num_reqs: Optional[int] = None
@@ -90,23 +90,24 @@ class ServerArgs:
     node_rank: Optional[int] = None
 
     def __post_init__(self):
-        if self.tokenizer_path is None:
-            self.tokenizer_path = self.model_path
+        if self.tokenizer_paths is None:
+            self.tokenizer_paths = self.model_paths
 
-        if self.served_model_name is None:
-            self.served_model_name = self.model_path
+        if self.served_model_names is None:
+            self.served_model_names = self.model_path
 
-        if self.mem_fraction_static is None:
+        num_models = len(self.model_paths)
+        if self.mem_fraction_statics is None:
             if self.tp_size >= 16:
-                self.mem_fraction_static = 0.79
+                self.mem_fraction_statics = [0.79/num_models] * num_models
             elif self.tp_size >= 8:
-                self.mem_fraction_static = 0.83
+                self.mem_fraction_statics = [0.83/num_models] * num_models
             elif self.tp_size >= 4:
-                self.mem_fraction_static = 0.85
+                self.mem_fraction_statics = [0.85/num_models] * num_models
             elif self.tp_size >= 2:
-                self.mem_fraction_static = 0.87
+                self.mem_fraction_statics = [0.87/num_models] * num_models
             else:
-                self.mem_fraction_static = 0.88
+                self.mem_fraction_statics = [0.88/num_models] * num_models
         if isinstance(self.additional_ports, int):
             self.additional_ports = [self.additional_ports]
         elif self.additional_ports is None:
@@ -118,16 +119,18 @@ class ServerArgs:
     @staticmethod
     def add_cli_args(parser: argparse.ArgumentParser):
         parser.add_argument(
-            "--model-path",
+            "--model-paths",
+            nargs="+",
             type=str,
-            help="The path of the model weights. This can be a local folder or a Hugging Face repo ID.",
+            help="The paths of the model weights. This can be a local folder or a Hugging Face repo ID.",
             required=True,
         )
         parser.add_argument(
-            "--tokenizer-path",
+            "--tokenizer-paths",
+            nargs="+",
             type=str,
-            default=ServerArgs.tokenizer_path,
-            help="The path of the tokenizer.",
+            default=ServerArgs.tokenizer_paths,
+            help="The paths of the tokenizers.",
         )
         parser.add_argument(
             "--host", type=str, default=ServerArgs.host, help="The host of the server."
@@ -209,9 +212,10 @@ class ServerArgs:
             help="The quantization method.",
         )
         parser.add_argument(
-            "--served-model-name",
+            "--served-model-names",
+            nargs="+",
             type=str,
-            default=ServerArgs.served_model_name,
+            default=ServerArgs.served_model_names,
             help="Override the model name returned by the v1/models endpoint in OpenAI API server.",
         )
         parser.add_argument(
@@ -221,10 +225,11 @@ class ServerArgs:
             help="The buliltin chat template name or the path of the chat template file. This is only used for OpenAI-compatible API server.",
         )
         parser.add_argument(
-            "--mem-fraction-static",
+            "--mem-fraction-statics",
             type=float,
-            default=ServerArgs.mem_fraction_static,
-            help="The fraction of the memory used for static allocation (model weights and KV cache memory pool). Use a smaller value if you see out-of-memory errors.",
+            nargs="*",
+            default=ServerArgs.mem_fraction_statics,
+            help="The fractions of the memory used for static allocation (model weights and KV cache memory pool). Use a smaller value if you see out-of-memory errors.",
         )
         parser.add_argument(
             "--max-prefill-tokens",
