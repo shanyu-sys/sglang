@@ -118,12 +118,13 @@ def run_one_batch_size(bs):
         fout.write(json.dumps(res) + "\n")
 
 
-def replace_model(model_path: str,
-                    tokenizer_path: str = None,
-                    tokenizer_mode: str = "auto",
-                    load_format: str = "auto",
-                    dtype: str = "auto",
-                  ):
+def replace_model(
+    model_path: str,
+    tokenizer_path: str = None,
+    tokenizer_mode: str = "auto",
+    load_format: str = "auto",
+    dtype: str = "auto",
+):
     url = f"{args.host}:{args.port}"
     response = requests.post(
         url + "/replace_model",
@@ -146,11 +147,13 @@ def run_replace_model():
     batch_size_1 = 64
     batch_size_2 = 4
     run_one_batch_size(batch_size_1)
-    replace_model(model_path="mistralai/Mistral-7B-Instruct-v0.2",
-                  tokenizer_path="mistralai/Mistral-7B-Instruct-v0.2",
-                  tokenizer_mode="auto",
-                  load_format="auto",
-                  dtype="auto")
+    replace_model(
+        model_path="mistralai/Mistral-7B-Instruct-v0.2",
+        tokenizer_path="mistralai/Mistral-7B-Instruct-v0.2",
+        tokenizer_mode="auto",
+        load_format="auto",
+        dtype="auto",
+    )
     run_one_batch_size(batch_size_2)
 
 

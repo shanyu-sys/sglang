@@ -37,4 +37,3 @@ class ReplaceResponse:
 @dataclasses.dataclass
 class DeleteRequest:
     model_path: str
-

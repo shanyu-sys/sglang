@@ -1,9 +1,11 @@
 """ModelRunner runs the forward passes of the models."""
 
+import gc
 import importlib
 import importlib.resources
 import logging
 import pkgutil
+import time
 from functools import lru_cache
 from typing import Optional, Type
 
@@ -35,8 +37,6 @@ from sglang.srt.utils import (
     monkey_patch_vllm_dummy_weight_loader,
     monkey_patch_vllm_p2p_access_check,
 )
-import gc
-import time
 
 logger = logging.getLogger("srt.model_runner")
 
@@ -104,10 +104,10 @@ class ModelRunner:
         self.init_cuda_graphs()
 
     def replace_model(self, new_model_config, new_server_args):
-        '''
+        """
         new_server_args: below fields need to be changed for the new model:
             load_format, model_path, quantization, trust_remote_code, dtype
-        '''
+        """
         begin = time.perf_counter()
         ## swap out model
         self.swap_out_model()
@@ -118,24 +118,34 @@ class ModelRunner:
         self.load_new_model(new_server_args, new_model_config)
 
         ## init memory pool
-        total_gpu_memory = get_available_gpu_memory(self.gpu_id, distributed=self.tp_size > 1)
+        total_gpu_memory = get_available_gpu_memory(
+            self.gpu_id, distributed=self.tp_size > 1
+        )
         self.init_memory_pool(total_gpu_memory)
         end = time.perf_counter()
-        logger.info(f"[gpu_id={self.gpu_id}] Model Runner replace model time: {end - begin:.2f} s")
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Model Runner replace model time: {end - begin:.2f} s"
+        )
 
     def swap_out_model(self):
-        """ swap out model """
+        """swap out model"""
         # swap model in gpu to cpu, and then delete the model in gpu
         begin_swap = time.perf_counter()
-        logger.info(f"[gpu_id={self.gpu_id}] Swap out model begin. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB")
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Swap out model begin. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+        )
         # self.model.to("cpu")
         del self.model
         self.model = None
         gc.collect()
         torch.cuda.empty_cache()
         end_swap = time.perf_counter()
-        logger.info(f"[gpu_id={self.gpu_id}] Swap out model end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB")
-        logger.info(f"[gpu_id={self.gpu_id}] Swap out model time: {end_swap - begin_swap:.2f} s")
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Swap out model end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+        )
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Swap out model time: {end_swap - begin_swap:.2f} s"
+        )
 
     def free_memory_pool(self):
         begin_free = time.perf_counter()
@@ -146,8 +156,12 @@ class ModelRunner:
         gc.collect()
         torch.cuda.empty_cache()
         end_free = time.perf_counter()
-        logger.info(f"[gpu_id={self.gpu_id}] Free memory pool end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB")
-        logger.info(f"[gpu_id={self.gpu_id}] Free memory pool time: {end_free - begin_free:.2f} s")
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Free memory pool end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+        )
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Free memory pool time: {end_free - begin_free:.2f} s"
+        )
 
     def load_new_model(self, new_server_args, new_model_config):
         logger.info(
@@ -191,7 +205,9 @@ class ModelRunner:
             f"dtype={self.dtype}, "
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )
-        logger.info(f"[gpu_id={self.gpu_id}] Load new model time: {end_load - begin_load:.2f} s")
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Load new model time: {end_load - begin_load:.2f} s"
+        )
 
     def load_model(self):
         logger.info(
@@ -279,7 +295,9 @@ class ModelRunner:
             f"[gpu_id={self.gpu_id}] Memory pool end. "
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )
-        logger.info(f"[gpu_id={self.gpu_id}] Init memory pool time: {end_init - begin_init:.2f} s")
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Init memory pool time: {end_init - begin_init:.2f} s"
+        )
 
     def init_cublas(self):
         """We need to run a small matmul to init cublas. Otherwise, it will raise some errors later."""

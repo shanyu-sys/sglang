@@ -71,6 +71,7 @@ ongoing_requests = set()
 model_replacement_in_progress = asyncio.Event()
 pending_requests = []
 
+
 @app.get("/health")
 async def health() -> Response:
     """Health check."""
@@ -158,21 +159,21 @@ async def replace_model(obj: ReplaceModelReqInput, request: Request):
     model_replacement_in_progress.set()
     start = time.perf_counter()
     await wait_for_ongoing_requests()
-    print(f"waiting for ongoing requests takes {time.perf_counter() - start:.2f} seconds")
+    print(
+        f"waiting for ongoing requests takes {time.perf_counter() - start:.2f} seconds"
+    )
 
     try:
         # replace model and tokenizer
         replace_model_tokenizer(obj)
 
         return JSONResponse(
-            {"message": "Model replaced successfully."},
-            status_code=HTTPStatus.OK
+            {"message": "Model replaced successfully."}, status_code=HTTPStatus.OK
         )
 
     except Exception as e:
         return JSONResponse(
-            {"error": {"message": str(e)}},
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR
+            {"error": {"message": str(e)}}, status_code=HTTPStatus.INTERNAL_SERVER_ERROR
         )
     finally:
         model_replacement_in_progress.clear()
@@ -188,7 +189,11 @@ def replace_model_tokenizer(obj: ReplaceModelReqInput):
     # replace tokenizer in tokenizer_manager
     st = time.perf_counter()
     tokenizer_manager.replace_tokenizer(obj)
-    print("tokenizer_manager replaced tokenizer successfully. Takes {:.2f} seconds".format(time.perf_counter() - st))
+    print(
+        "tokenizer_manager replaced tokenizer successfully. Takes {:.2f} seconds".format(
+            time.perf_counter() - st
+        )
+    )
 
     # send replace model request to router
     tokenizer_manager.send_to_router.send_pyobj(obj)

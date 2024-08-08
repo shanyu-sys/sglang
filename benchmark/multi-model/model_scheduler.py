@@ -1,7 +1,8 @@
-from config import CONFIG, MODEL_CONFIGS
-from trace import generate_synthetic_reqs
-import json
 import argparse
+import json
+from trace import generate_synthetic_reqs
+
+from config import CONFIG, MODEL_CONFIGS
 from request import ReplaceRequest
 
 
@@ -116,7 +117,8 @@ if __name__ == "__main__":
     if args.strategy == "collocate":
         collocate_models(args.initial_models_servers, args.replacement_strategy)
     elif args.strategy == "swap":
-        swap_models(args.initial_models_servers, args.replacement_strategy, args.load_format)
+        swap_models(
+            args.initial_models_servers, args.replacement_strategy, args.load_format
+        )
     else:
         raise ValueError(f"Unknown strategy: {args.strategy}")
-

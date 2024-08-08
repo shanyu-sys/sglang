@@ -219,7 +219,7 @@ async def send_request(
 
 async def replace_model(model_path: str, tokenizer_path: str, api_url: str) -> None:
     replace_start_time = time.perf_counter()
-    
+
     headers = {"User-Agent": "Benchmark Client"}
     pload = {
         "model_path": model_path,
@@ -278,7 +278,7 @@ async def benchmark(
         tasks.append(task)
         counter += 1
         if counter == 32:
-            # replace model 
+            # replace model
             # model_path = "mistralai/Mistral-7B-Instruct-v0.2"
             # tokenizer_path = "mistralai/Mistral-7B-Instruct-v0.2"
             model_path = "meta-llama/Llama-2-7b-chat-hf"

@@ -1,9 +1,9 @@
 """Memory pool."""
 
+import gc
 import logging
 
 import torch
-import gc
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ class ReqToTokenPool:
         self.req_to_token = None
         gc.collect()
         torch.cuda.empty_cache()
+
 
 class TokenToKVPool:
     """A memory pool that maps a token to its kv cache locations"""

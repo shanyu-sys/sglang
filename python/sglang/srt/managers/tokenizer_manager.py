@@ -27,8 +27,8 @@ from sglang.srt.managers.io_struct import (
     BatchTokenIDOut,
     FlushCacheReq,
     GenerateReqInput,
-    TokenizedGenerateReqInput,
     ReplaceModelReqInput,
+    TokenizedGenerateReqInput,
 )
 from sglang.srt.mm_utils import expand2square, process_anyres_image
 from sglang.srt.sampling_params import SamplingParams

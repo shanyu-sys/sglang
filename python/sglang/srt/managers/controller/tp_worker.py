@@ -28,8 +28,8 @@ from sglang.srt.managers.io_struct import (
     AbortReq,
     BatchTokenIDOut,
     FlushCacheReq,
+    ReplaceModelReqInput,
     TokenizedGenerateReqInput,
-    ReplaceModelReqInput
 )
 from sglang.srt.model_config import ModelConfig
 from sglang.srt.server_args import ServerArgs
@@ -321,7 +321,9 @@ class ModelTpServer:
         self.new_token_ratio_decay = global_config.new_token_ratio_decay
         self.new_token_ratio_recovery = global_config.new_token_ratio_recovery
         end = time.perf_counter()
-        logger.info(f"ModelTPServer replace_model_tokenizer time: {end - begin_replace:.4f}s")
+        logger.info(
+            f"ModelTPServer replace_model_tokenizer time: {end - begin_replace:.4f}s"
+        )
 
     def has_unfinished_requests(self):
         return len(self.forward_queue) > 0 or (
