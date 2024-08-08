@@ -64,6 +64,28 @@ def swap_models(initial_models_servers_file, replacement_strategy_file, load_for
     print(f"req_ids: {list(req_id_to_replace_req.keys())}")
 
 
+def get_replace_requests(trace_config):
+    requests = generate_synthetic_reqs(trace_config)
+    req_id_to_replace_req = {}
+    cur_model = None
+    last_req_id = None
+    for req in requests:
+        if cur_model is None:
+            cur_model = req.model
+
+        if req.model != cur_model:
+            load_format = MODEL_CONFIGS[req.model]["load_format"]
+            req_id_to_replace_req[last_req_id] = ReplaceRequest(
+                old_model_path=cur_model,
+                new_model_path=req.model,
+                new_tokenizer_path=req.tokenizer,
+                load_format=load_format,
+            )
+            cur_model = req.model
+        last_req_id = req.req_id
+    return req_id_to_replace_req
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate initial models and ports; generate replacement strategies."

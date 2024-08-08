@@ -18,6 +18,8 @@ class TraceConfig:
     alpha: Optional[float] = None
     cv: Optional[float] = None
 
+    def to_dict(self):
+        return dataclasses.asdict(self)
 
 def dummy_prompt(prompt_len):
     return "Hello " * prompt_len

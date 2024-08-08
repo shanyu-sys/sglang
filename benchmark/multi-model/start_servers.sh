@@ -70,7 +70,7 @@ if [ "$MODE" == "1" ]; then
 else
     for model in "${!models_ports[@]}"; do
         port=${models_ports[$model]}
-        launch_server ${model} ${port}
+        launch_server ${model} ${port} 0.7
         sleep 5 # Wait a bit for the server to start
     done
 fi

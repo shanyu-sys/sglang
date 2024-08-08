@@ -128,7 +128,7 @@ class ModelRunner:
         # swap model in gpu to cpu, and then delete the model in gpu
         begin_swap = time.perf_counter()
         logger.info(f"[gpu_id={self.gpu_id}] Swap out model begin. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB")
-        self.model.to("cpu")
+        # self.model.to("cpu")
         del self.model
         self.model = None
         gc.collect()

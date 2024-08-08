@@ -148,11 +148,12 @@ app.put("/generate")(generate_request)
 
 @app.post("/replace_model")
 async def replace_model(obj: ReplaceModelReqInput, request: Request):
-    if model_replacement_in_progress.is_set():
-        return JSONResponse(
-            {"message": "Model replacement in progress, please try again later."},
-            status_code=HTTPStatus.SERVICE_UNAVAILABLE
-        )
+    while model_replacement_in_progress.is_set():
+        await asyncio.sleep(0.1)
+        # return JSONResponse(
+        #     {"message": "Model replacement in progress, please try again later."},
+        #     status_code=HTTPStatus.SERVICE_UNAVAILABLE
+        # )
 
     model_replacement_in_progress.set()
     start = time.perf_counter()
@@ -180,6 +181,7 @@ async def replace_model(obj: ReplaceModelReqInput, request: Request):
 def replace_model_tokenizer(obj: ReplaceModelReqInput):
     # tokenizer_manager.replace_model(obj)
     print("Replacing model ...")
+    print("current model path:", tokenizer_manager.model_path)
     print("New model path:", obj.model_path)
     print("New tokenizer path:", obj.tokenizer_path)
 

@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 
 from trace import TraceConfig, generate_synthetic_reqs
 from request import Request, ReplaceRequest
-from config import CONFIG
+from config import MODEL_CONFIGS
 
 
 # (prompt len, output len, latency)
@@ -178,23 +178,23 @@ def compute_stats(benchmark_latency: float):
     ) / benchmark_latency
 
     # compute request stats
-    avg_prompt_len = np.mean(
-        [prompt_len for prompt_len, _, _, _ in per_req_latency]
-    )
-    avg_output_len = np.mean(
-        [output_len for _, output_len, _, _ in per_req_latency]
-    )
+    # avg_prompt_len = np.mean(
+    #     [prompt_len for prompt_len, _, _, _ in per_req_latency]
+    # )
+    # avg_output_len = np.mean(
+    #     [output_len for _, output_len, _, _ in per_req_latency]
+    # )
 
     print(f"Total time: {benchmark_latency:.2f} s")
-    print(f"Number of aborted requests: {num_abort}")
+    # print(f"Number of aborted requests: {num_abort}")
     print(f"Average request latency: {avg_request_latency:.2f} s")
     # print(f"Average first token latency: {avg_first_token_latency:.2f} s")
     print(f"Average per token latency: {avg_per_token_latency:.2f} s")
     print(f"Average per output token latency: {avg_per_output_token_latency:.2f} s")
     print(f"Request throughput: {request_throughput:.2f} req/s")
     print(f"Output token throughput: {output_token_throughput:.2f} token/s")
-    print(f"Average prompt length: {avg_prompt_len:.2f}")
-    print(f"Average output length: {avg_output_len:.2f}")
+    # print(f"Average prompt length: {avg_prompt_len:.2f}")
+    # print(f"Average output length: {avg_output_len:.2f}")
 
     result  = {
         "total_time": benchmark_latency,
@@ -205,13 +205,13 @@ def compute_stats(benchmark_latency: float):
         "avg_per_output_token_latency": avg_per_output_token_latency,
         "request_throughput": request_throughput,
         "output_token_throughput": output_token_throughput,
-        "avg_prompt_len": avg_prompt_len,
-        "avg_output_len": avg_output_len,
+        # "avg_prompt_len": avg_prompt_len,
+        # "avg_output_len": avg_output_len,
     }
     return result
 
 
-def run(trace_config, backend, debug):
+def run(trace_config, backend, output_file, debug=False):
     # get requests
     requests = generate_synthetic_reqs(trace_config)
 
@@ -228,8 +228,13 @@ def run(trace_config, backend, debug):
 
     # compute stats
     metrics = compute_stats(benchmark_latency)
-    return metrics
 
+    with open(output_file, "a") as f:
+        result = {
+            "config": trace_config.__dict__,
+            "metrics": metrics,
+        }
+        f.write(json.dumps(result) + "\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -242,37 +247,98 @@ if __name__ == "__main__":
         choices=["srt"],
     )
     parser.add_argument(
-        "--server-file",
+        "--mode",
         type=str,
-        default="servers.json",
+        default=None,
+        choices=["swap", "collocate"],
+        help="The mode for multi-model benchmarking."
     )
     parser.add_argument(
-        "--replace-file",
+        "--model-name",
         type=str,
-        default="replacement_strategy.json",
+        default="meta-llama/Llama-2-7b-chat-hf",
+        choices=["meta-llama/Llama-2-7b-chat-hf", "mistralai/Mistral-7B-Instruct-v0.2"],
+        help="For single model benchmarking."
     )
 
     parser.add_argument("--dataset", type=str, help="Path to the dataset.")
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--output", type=str, default="output.jsonl")
+    parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--append", action="store_true")
 
-
     args = parser.parse_args()
-
-    # load the server file
-    with open(args.server_file, "r") as f:
-        model_dir_to_server = json.load(f)
     
-    # load the replace file
-    with open(args.replace_file, "r") as f:
-        tmp_last_gen_req_to_replace_req = json.load(f)
-        last_gen_req_to_replace_req = {k: ReplaceRequest(**v) for k, v in tmp_last_gen_req_to_replace_req.items()}
-    
-    trace_config = CONFIG
+    # get the initial model servers
+    if args.mode == "collocate":
+        for model in MODEL_CONFIGS:
+            port = MODEL_CONFIGS[model]["port"]
+            server_url = f"http://127.0.0.1:{port}"
+            model_dir_to_server[model] = server_url
+    else:
+        model = args.model_name
+        port = MODEL_CONFIGS[model]["port"]
+        server_url = f"http://127.0.0.1:{port}"
+        model_dir_to_server[model] = server_url
 
-    metrics = run(trace_config, args.backend, args.debug)
-    with open(args.output, "a" if args.append else "w") as f:
-        # write the trace config
-        f.write(json.dumps(trace_config.__dict__) + "\n")
-        f.write(json.dumps(metrics) + "\n")
+    if args.mode is None:
+        print("Single model benchmarking")
+        model_paths = [args.model_name]
+        tokenizers = [MODEL_CONFIGS[args.model_name]["tokenizer_path"]]
+    else:
+        print("Multi-model benchmarking with mode", args.mode)
+        model_paths = list(MODEL_CONFIGS.keys())
+        tokenizers = [MODEL_CONFIGS[model]["tokenizer_path"] for model in model_paths]
+
+    # generate output file
+    if args.output is None:
+        mode = args.mode if args.mode is not None else args.model_name.split("/")[1]
+        output_file = f"benchmark_{mode}.json"
+    else:
+        output_file = args.output
+
+    if not args.append:
+        if os.path.exists(output_file):
+            os.system(f"rm {output_file}")
+        results = []
+    else:
+        with open(output_file, "r") as f:
+            lines = f.readlines()
+        results = [json.loads(line)["config"] for line in lines]
+
+    req_rates = [1, 2, 3, 4, 6, 8, 10, 20, 30]
+    for req_rate in req_rates:
+        print("**** Benchmarking with req_rate", req_rate)
+        trace_config = TraceConfig(
+            req_rate=req_rate,
+            duration=60,
+            input_range=[8, 512],
+            output_range=[8, 512],
+            model_paths=model_paths,
+            tokenizer_paths=tokenizers,
+            seed=42,
+            alpha=0.1,
+            cv=1,
+        )
+
+        if trace_config.__dict__ in results:
+            print("Skip the existing config")
+            continue
+
+        # get the replace requests
+        if args.mode == "swap":
+            from model_scheduler import get_replace_requests
+            last_gen_req_to_replace_req = get_replace_requests(trace_config)
+            print("Number of replace requests:", len(last_gen_req_to_replace_req))
+            print("Request_ids before replacing:", list(last_gen_req_to_replace_req.keys()))
+            
+        # load the server file
+        # with open(args.server_file, "r") as f:
+        #     model_dir_to_server = json.load(f)
+        
+        # # load the replace file
+        # with open(args.replace_file, "r") as f:
+        #     tmp_last_gen_req_to_replace_req = json.load(f)
+        #     last_gen_req_to_replace_req = {k: ReplaceRequest(**v) for k, v in tmp_last_gen_req_to_replace_req.items()}
+
+        run(trace_config, args.backend, output_file, args.debug)
+
