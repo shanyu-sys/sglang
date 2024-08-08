@@ -174,6 +174,7 @@ def alloc_can_use_network_port(num=5, used_nccl_port=None):
                 return port_list
     return None
 
+
 def allocate_init_ports(
     port: Optional[int] = None,
     num_models: int = 1,
@@ -200,7 +201,8 @@ def allocate_init_ports(
             f"WARNING: Port {port} is not available. Use port {ret_ports[0]} instead."
         )
     each_model_ports = [
-        ret_ports[i : i + num_ports_per_model] for i in range(1, len(ret_ports), num_ports_per_model)
+        ret_ports[i : i + num_ports_per_model]
+        for i in range(1, len(ret_ports), num_ports_per_model)
     ]
 
     return ret_ports[0], each_model_ports

@@ -103,7 +103,10 @@ class TokenizerManager:
             self.executor = concurrent.futures.ProcessPoolExecutor(
                 initializer=init_global_processor,
                 mp_context=mp.get_context("fork"),
-                initargs=(server_args, index,),
+                initargs=(
+                    server_args,
+                    index,
+                ),
             )
         else:
             self.tokenizer = get_tokenizer(

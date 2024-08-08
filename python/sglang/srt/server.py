@@ -108,6 +108,7 @@ async def get_server_args():
     tokenizer_manager = next(iter(tokenizer_managers.values()))
     return dataclasses.asdict(tokenizer_manager.server_args)
 
+
 @app.get("/flush_cache")
 async def flush_cache():
     for tokenizer_manager in tokenizer_managers.values():
@@ -188,8 +189,9 @@ def launch_server(
         )
         port_args_list.append(port_args)
 
-
-    assert server_args.nnodes == 1, "Multi-node tensor parallelism is not supported yet."
+    assert (
+        server_args.nnodes == 1
+    ), "Multi-node tensor parallelism is not supported yet."
     # # Launch processes for multi-node tensor parallelism
     # if server_args.nnodes > 1:
     #     if server_args.node_rank != 0:
@@ -220,7 +222,9 @@ def launch_server(
     proc_detoken_list = []
     for i, model in enumerate(server_args.model_paths):
         port_args = port_args_list[i]
-        tokenizer_manager = TokenizerManager(i, server_args, port_args, model_overide_args)
+        tokenizer_manager = TokenizerManager(
+            i, server_args, port_args, model_overide_args
+        )
         tokenizer_managers[model] = tokenizer_manager
         pipe_controller_reader, pipe_controller_writer = mp.Pipe(duplex=False)
         pipe_detoken_reader, pipe_detoken_writer = mp.Pipe(duplex=False)
@@ -234,7 +238,13 @@ def launch_server(
             start_process = start_controller_process_multi
         proc_controller = mp.Process(
             target=start_process,
-            args=(i, server_args, port_args, pipe_controller_writer, model_overide_args),
+            args=(
+                i,
+                server_args,
+                port_args,
+                pipe_controller_writer,
+                model_overide_args,
+            ),
         )
         proc_controller.start()
         proc_detoken = mp.Process(

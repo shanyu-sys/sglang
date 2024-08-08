@@ -883,7 +883,14 @@ def launch_tp_servers(
     for i in tp_rank_range:
         proc = multiprocessing.Process(
             target=run_tp_server,
-            args=(model_index, gpu_ids[i], i, server_args, nccl_port, model_overide_args),
+            args=(
+                model_index,
+                gpu_ids[i],
+                i,
+                server_args,
+                nccl_port,
+                model_overide_args,
+            ),
         )
         proc.start()
         procs.append(proc)

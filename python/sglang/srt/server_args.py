@@ -99,15 +99,15 @@ class ServerArgs:
         num_models = len(self.model_paths)
         if self.mem_fraction_statics is None:
             if self.tp_size >= 16:
-                self.mem_fraction_statics = [0.79/num_models] * num_models
+                self.mem_fraction_statics = [0.79 / num_models] * num_models
             elif self.tp_size >= 8:
-                self.mem_fraction_statics = [0.83/num_models] * num_models
+                self.mem_fraction_statics = [0.83 / num_models] * num_models
             elif self.tp_size >= 4:
-                self.mem_fraction_statics = [0.85/num_models] * num_models
+                self.mem_fraction_statics = [0.85 / num_models] * num_models
             elif self.tp_size >= 2:
-                self.mem_fraction_statics = [0.87/num_models] * num_models
+                self.mem_fraction_statics = [0.87 / num_models] * num_models
             else:
-                self.mem_fraction_statics = [0.88/num_models] * num_models
+                self.mem_fraction_statics = [0.88 / num_models] * num_models
         if isinstance(self.additional_ports, int):
             self.additional_ports = [self.additional_ports]
         elif self.additional_ports is None:
