@@ -94,10 +94,11 @@ class ModelRunner:
                 "enable_mla": server_args.enable_mla,
             }
         )
+        self.model_path = model_config.path
 
         # Init torch distributed
         torch.cuda.set_device(self.gpu_id)
-        logger.info(f"[gpu={self.gpu_id}] Init nccl begin.")
+        logger.info(f"[{self.model_path}][gpu={self.gpu_id}] Init nccl begin.")
 
         if not server_args.enable_p2p_check:
             monkey_patch_vllm_p2p_access_check(self.gpu_id)
@@ -141,6 +142,7 @@ class ModelRunner:
 
     def load_model(self):
         logger.info(
+            f"[{self.model_path}]"
             f"[gpu={self.gpu_id}] Load weight begin. "
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )
@@ -149,7 +151,7 @@ class ModelRunner:
         device_config = DeviceConfig()
         load_config = LoadConfig(load_format=self.server_args.load_format)
         vllm_model_config = VllmModelConfig(
-            model=self.server_args.model_path,
+            model=self.model_path,
             quantization=self.server_args.quantization,
             tokenizer=None,
             tokenizer_mode=None,
@@ -171,7 +173,7 @@ class ModelRunner:
 
         if (
             self.server_args.efficient_weight_load
-            and "llama" in self.server_args.model_path.lower()
+            and "llama" in self.model_path.lower()
             and self.server_args.quantization == "fp8"
         ):
             from sglang.srt.model_loader.model_loader import get_model
@@ -189,6 +191,7 @@ class ModelRunner:
             cache_config=None,
         )
         logger.info(
+            f"[{self.model_path}]"
             f"[gpu={self.gpu_id}] Load weight end. "
             f"type={type(self.model).__name__}, "
             f"dtype={self.dtype}, "
@@ -278,6 +281,7 @@ class ModelRunner:
                 layer_num=self.model_config.num_hidden_layers,
             )
         logger.info(
+            f"[{self.model_path}]"
             f"[gpu={self.gpu_id}] Memory pool end. "
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )

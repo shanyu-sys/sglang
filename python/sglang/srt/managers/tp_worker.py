@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 class ModelTpServer:
     def __init__(
         self,
+        model_index: int,
         gpu_id: int,
         tp_rank: int,
         server_args: ServerArgs,
@@ -78,20 +79,23 @@ class ModelTpServer:
         self.schedule_policy = server_args.schedule_policy
         self.disable_regex_jump_forward = server_args.disable_regex_jump_forward
 
+        # model name for logging
+        self.model_name = server_args.model_paths[model_index].split("/")[-1]
+
         # Chunked prefill
         self.chunked_prefill_size = server_args.chunked_prefill_size
         self.current_inflight_req = None
 
         # Init model and tokenizer
         self.model_config = ModelConfig(
-            server_args.model_path,
+            server_args.model_paths[model_index],
             server_args.trust_remote_code,
             context_length=server_args.context_length,
             model_overide_args=model_overide_args,
         )
         self.model_runner = ModelRunner(
             model_config=self.model_config,
-            mem_fraction_static=server_args.mem_fraction_static,
+            mem_fraction_static=server_args.mem_fraction_statics[model_index],
             gpu_id=gpu_id,
             tp_rank=tp_rank,
             tp_size=server_args.tp_size,
@@ -99,16 +103,16 @@ class ModelTpServer:
             server_args=server_args,
         )
 
-        if is_multimodal_model(server_args.model_path):
+        if is_multimodal_model(server_args.model_paths[model_index]):
             self.processor = get_processor(
-                server_args.tokenizer_path,
+                server_args.tokenizer_paths[model_index],
                 tokenizer_mode=server_args.tokenizer_mode,
                 trust_remote_code=server_args.trust_remote_code,
             )
             self.tokenizer = self.processor.tokenizer
         else:
             self.tokenizer = get_tokenizer(
-                server_args.tokenizer_path,
+                server_args.tokenizer_paths[model_index],
                 tokenizer_mode=server_args.tokenizer_mode,
                 trust_remote_code=server_args.trust_remote_code,
             )
@@ -137,6 +141,7 @@ class ModelTpServer:
 
         # Print info
         logger.info(
+            f"[{self.model_name}]"
             f"[gpu={self.gpu_id}] "
             f"max_total_num_tokens={self.max_total_num_tokens}, "
             f"max_prefill_tokens={self.max_prefill_tokens}, "
@@ -181,7 +186,7 @@ class ModelTpServer:
 
         # Init the FSM cache for constrained generation
         self.regex_fsm_cache = FSMCache(
-            server_args.tokenizer_path,
+            server_args.tokenizer_paths[model_index],
             {
                 "tokenizer_mode": server_args.tokenizer_mode,
                 "trust_remote_code": server_args.trust_remote_code,
@@ -271,6 +276,7 @@ class ModelTpServer:
         self.num_generated_tokens = 0
         self.last_stats_tic = time.time()
         logger.info(
+            f"[{self.model_name}]"
             f"[gpu={self.gpu_id}] Decode batch. "
             f"#running-req: {len(self.running_batch.reqs)}, "
             f"#token: {num_used}, "
@@ -515,6 +521,7 @@ class ModelTpServer:
                 self.tree_cache_metrics["hit"] / self.tree_cache_metrics["total"]
             )
             logger.info(
+                f"[{self.model_name}]"
                 f"[gpu={self.gpu_id}] Prefill batch. "
                 f"#new-seq: {len(can_run_list)}, "
                 f"#new-token: {new_batch_input_tokens}, "
@@ -847,6 +854,7 @@ class ModelTpServer:
 
 
 def run_tp_server(
+    model_index: int,
     gpu_id: int,
     tp_rank: int,
     server_args: ServerArgs,
@@ -856,6 +864,7 @@ def run_tp_server(
     """Run a tensor parallel server."""
     try:
         model_server = ModelTpServer(
+            model_index,
             gpu_id,
             tp_rank,
             server_args,
@@ -873,14 +882,21 @@ def run_tp_server(
 
 
 def launch_tp_servers(
-    gpu_ids, tp_rank_range, server_args, nccl_port, model_overide_args
+    model_index, gpu_ids, tp_rank_range, server_args, nccl_port, model_overide_args
 ):
     """Launch multiple tensor parallel servers."""
     procs = []
     for i in tp_rank_range:
         proc = multiprocessing.Process(
             target=run_tp_server,
-            args=(gpu_ids[i], i, server_args, nccl_port, model_overide_args),
+            args=(
+                model_index,
+                gpu_ids[i],
+                i,
+                server_args,
+                nccl_port,
+                model_overide_args,
+            ),
         )
         proc.start()
         procs.append(proc)

@@ -113,7 +113,7 @@ def load_model(server_args, tp_rank):
     model_config = ModelConfig(path=server_args.model_path)
     model_runner = ModelRunner(
         model_config=model_config,
-        mem_fraction_static=server_args.mem_fraction_static,
+        mem_fraction_static=server_args.mem_fraction_statics,
         gpu_id=tp_rank,
         tp_rank=tp_rank,
         tp_size=server_args.tp_size,
