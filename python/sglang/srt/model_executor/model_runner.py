@@ -98,7 +98,7 @@ class ModelRunner:
 
         # Init torch distributed
         torch.cuda.set_device(self.gpu_id)
-        logger.info(f"[gpu={self.gpu_id}] Init nccl begin.")
+        logger.info(f"[{self.model_path}][gpu={self.gpu_id}] Init nccl begin.")
 
         if not server_args.enable_p2p_check:
             monkey_patch_vllm_p2p_access_check(self.gpu_id)
@@ -142,6 +142,7 @@ class ModelRunner:
 
     def load_model(self):
         logger.info(
+            f"[{self.model_path}]"
             f"[gpu={self.gpu_id}] Load weight begin. "
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )
@@ -190,6 +191,7 @@ class ModelRunner:
             cache_config=None,
         )
         logger.info(
+            f"[{self.model_path}]"
             f"[gpu={self.gpu_id}] Load weight end. "
             f"type={type(self.model).__name__}, "
             f"dtype={self.dtype}, "
@@ -279,6 +281,7 @@ class ModelRunner:
                 layer_num=self.model_config.num_hidden_layers,
             )
         logger.info(
+            f"[{self.model_path}]"
             f"[gpu={self.gpu_id}] Memory pool end. "
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )

@@ -94,7 +94,7 @@ class ServerArgs:
             self.tokenizer_paths = self.model_paths
 
         if self.served_model_names is None:
-            self.served_model_names = self.model_path
+            self.served_model_names = self.model_paths
 
         num_models = len(self.model_paths)
         if self.mem_fraction_statics is None:

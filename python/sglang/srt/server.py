@@ -85,7 +85,7 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 app = FastAPI()
 # mapping from model_name to tokenizer_manager
-tokenizer_managers = None
+tokenizer_managers = {}
 
 
 @app.get("/health")
@@ -123,6 +123,11 @@ async def flush_cache():
 async def generate_request(obj: GenerateReqInput, request: Request):
     """Handle a generate request."""
     model = obj.model
+    if model not in tokenizer_managers:
+        return JSONResponse(
+            {"error": {"message": f"Model {model} not found."}},
+            status_code=HTTPStatus.NOT_FOUND,
+        )
     tokenizer_manager = tokenizer_managers[model]
     if obj.stream:
 
