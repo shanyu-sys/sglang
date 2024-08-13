@@ -43,6 +43,8 @@ from sglang.srt.managers.io_struct import (
     FlushCacheReq,
     GenerateReqInput,
     TokenizedGenerateReqInput,
+    DeactivateReq,
+    ActivateReq,
 )
 from sglang.srt.mm_utils import expand2square, process_anyres_image
 from sglang.srt.sampling_params import SamplingParams
@@ -443,6 +445,37 @@ class TokenizerManager:
         del self.rid_to_state[rid]
         req = AbortReq(rid)
         self.send_to_router.send_pyobj(req)
+    
+    async def deactivate_model(self, to_cpu: bool = False):
+        deactivate_req = DeactivateReq(self.served_model_name, to_cpu)
+        ret = await self._send_req_and_wait_for_response(deactivate_req, "deactivate")
+        return ret
+
+    def activate_model(self):
+        activate_req = ActivateReq(self.served_model_name)
+        self.send_to_router.send_pyobj(activate_req)
+        # ret = await self._send_req_and_wait_for_response(activate_req, "activate")
+        # return ret
+    
+    async def _send_req_and_wait_for_response(self, obj, rid: str):
+        self.send_to_router.send_pyobj(obj)
+
+        event = asyncio.Event()
+        state = ReqState([], False, event)
+        self.rid_to_state[rid] = state
+
+        while True:
+            try:
+                asyncio.wait_for(state.event.wait(), timeout=4)
+                break
+            except asyncio.TimeoutError:
+                continue
+
+        assert state.finished
+        out = state.out_list[-1]
+        del self.rid_to_state[rid]
+        print(out)
+        return out
 
     def create_abort_task(self, obj: GenerateReqInput):
         # Abort the request if the client is disconnected.

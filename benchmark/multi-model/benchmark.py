@@ -13,6 +13,7 @@ from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
 
 from trace import TraceConfig, generate_synthetic_reqs, Request
+import tqdm
 
 
 # (prompt len, output len, latency)
@@ -80,7 +81,7 @@ async def benchmark(
 ) -> None:
     start = time.perf_counter()
     tasks: List[asyncio.Task] = []
-    for req in input_requests:
+    for req in tqdm.tqdm(input_requests):
         sleep_time = start + req.arrival_time - time.time()
         await asyncio.sleep(sleep_time)
         if debug:
@@ -188,12 +189,23 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--output", type=str, default="output.jsonl")
     parser.add_argument("--append", action="store_true")
+    parser.add_argument("--model-paths", type=str, nargs="+", 
+                        default=["meta-llama/Llama-2-7b-chat-hf", "mistralai/Mistral-7B-Instruct-v0.2"])
 
 
     args = parser.parse_args()
 
-    
-    trace_config = CONFIG
+    trace_config = TraceConfig(
+        req_rate=2,  # 2 requests per second
+        duration=60 * 5,  # 5 minutes
+        input_range=[8, 512],  # input length between 8 and 512
+        output_range=[8, 512],  # output length between 8 and 512
+        model_paths=args.model_paths,  # list of model paths
+        seed=42,
+        alpha=0.1,  # The mean rate for poisson arrival process
+        cv=1,  # The coefficient of variation for gamma distributed intervals
+    )
+
 
     metrics = run(trace_config, args.backend, args.debug)
     with open(args.output, "a" if args.append else "w") as f:

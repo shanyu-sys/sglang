@@ -77,6 +77,8 @@ from sglang.srt.utils import (
     set_ulimit,
 )
 from sglang.utils import get_exception_traceback
+from sglang.srt.controller import Controller
+
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,7 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 app = FastAPI()
 # mapping from model_name to tokenizer_manager
 tokenizer_managers = {}
+controller = None
 
 
 @app.get("/health")
@@ -128,31 +131,36 @@ async def generate_request(obj: GenerateReqInput, request: Request):
             {"error": {"message": f"Model {model} not found."}},
             status_code=HTTPStatus.NOT_FOUND,
         )
-    tokenizer_manager = tokenizer_managers[model]
-    if obj.stream:
 
-        async def stream_results():
-            try:
-                async for out in tokenizer_manager.generate_request(obj, request):
-                    yield f"data: {json.dumps(out, ensure_ascii=False)}\n\n"
-            except ValueError as e:
-                out = {"error": {"message": str(e)}}
-                yield f"data: {json.dumps(out, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
+    # wait for the result
+    ret = await controller.generate_request(obj, request)
+    return ret
 
-        return StreamingResponse(
-            stream_results(),
-            media_type="text/event-stream",
-            background=tokenizer_manager.create_abort_task(obj),
-        )
-    else:
-        try:
-            ret = await tokenizer_manager.generate_request(obj, request).__anext__()
-            return ret
-        except ValueError as e:
-            return JSONResponse(
-                {"error": {"message": str(e)}}, status_code=HTTPStatus.BAD_REQUEST
-            )
+    # tokenizer_manager = tokenizer_managers[model]
+    # if obj.stream:
+
+    #     async def stream_results():
+    #         try:
+    #             async for out in tokenizer_manager.generate_request(obj, request):
+    #                 yield f"data: {json.dumps(out, ensure_ascii=False)}\n\n"
+    #         except ValueError as e:
+    #             out = {"error": {"message": str(e)}}
+    #             yield f"data: {json.dumps(out, ensure_ascii=False)}\n\n"
+    #         yield "data: [DONE]\n\n"
+
+    #     return StreamingResponse(
+    #         stream_results(),
+    #         media_type="text/event-stream",
+    #         background=tokenizer_manager.create_abort_task(obj),
+    #     )
+    # else:
+    #     try:
+    #         ret = await tokenizer_manager.generate_request(obj, request).__anext__()
+    #         return ret
+    #     except ValueError as e:
+    #         return JSONResponse(
+    #             {"error": {"message": str(e)}}, status_code=HTTPStatus.BAD_REQUEST
+    #         )
 
 
 app.post("/generate")(generate_request)
@@ -285,6 +293,11 @@ def launch_server(
 
     for proc_controller, proc_detoken in zip(proc_controller_list, proc_detoken_list):
         assert proc_controller.is_alive() and proc_detoken.is_alive()
+
+    # Launch the controller
+    global controller
+    controller = Controller(tokenizer_managers=tokenizer_managers,
+                            server_args=server_args)
 
     # Add api key authorization
     if server_args.api_key:

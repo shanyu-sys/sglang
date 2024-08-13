@@ -34,6 +34,8 @@ from sglang.srt.managers.io_struct import (
     BatchTokenIDOut,
     FlushCacheReq,
     TokenizedGenerateReqInput,
+    DeactivateReq,
+    ActivateReq,
 )
 from sglang.srt.managers.policy_scheduler import PolicyScheduler
 from sglang.srt.managers.schedule_batch import (
@@ -78,6 +80,7 @@ class ModelTpServer:
         self.dp_size = server_args.dp_size
         self.schedule_policy = server_args.schedule_policy
         self.disable_regex_jump_forward = server_args.disable_regex_jump_forward
+        self.server_args = server_args
 
         # model name for logging
         self.model_name = server_args.model_paths[model_index].split("/")[-1]
@@ -116,17 +119,55 @@ class ModelTpServer:
                 tokenizer_mode=server_args.tokenizer_mode,
                 trust_remote_code=server_args.trust_remote_code,
             )
+
+         # Init running status
+        self.waiting_queue: List[Req] = []
+        self.running_batch: Batch = None
+        self.out_pyobjs = []
+        self.decode_forward_ct = 0
+        self.stream_interval = self.server_args.stream_interval
+        self.num_generated_tokens = 0
+        self.last_stats_tic = time.time()
+
+        # Init the FSM cache for constrained generation
+        self.regex_fsm_cache = FSMCache(
+            self.server_args.tokenizer_paths[model_index],
+            {
+                "tokenizer_mode": self.server_args.tokenizer_mode,
+                "trust_remote_code": self.server_args.trust_remote_code,
+            },
+        )
+        self.jump_forward_cache = JumpForwardCache()
+
+        # Init new token estimation
+        assert (
+            self.server_args.schedule_conservativeness >= 0
+        ), "Invalid schedule_conservativeness"
+        self.min_new_token_ratio = min(
+            global_config.base_min_new_token_ratio
+            * self.server_args.schedule_conservativeness,
+            1.0,
+        )
+        self.new_token_ratio = self.min_new_token_ratio
+        self.new_token_ratio_decay = global_config.new_token_ratio_decay
+        self.new_token_ratio_recovery = global_config.new_token_ratio_recovery
+
+        self._activated = False
+
+    def _activate(self):
+        assert not self._activated, "ModelTpServer has already been activated"
+        self._activated = True
         self.max_total_num_tokens = self.model_runner.max_total_num_tokens
         self.max_prefill_tokens = (
             16384
-            if server_args.max_prefill_tokens is None
-            else server_args.max_prefill_tokens
+            if self.server_args.max_prefill_tokens is None
+            else self.server_args.max_prefill_tokens
         )
         self.max_running_requests = min(
             (
                 self.max_total_num_tokens // 2
-                if server_args.max_running_requests is None
-                else server_args.max_running_requests
+                if self.server_args.max_running_requests is None
+                else self.server_args.max_running_requests
             ),
             self.model_runner.req_to_token_pool.size - 1,
         )
@@ -137,7 +178,7 @@ class ModelTpServer:
             self.model_config.context_len - 1,
             self.max_total_num_tokens - 1,
         )
-        set_random_seed(server_args.random_seed)
+        set_random_seed(self.server_args.random_seed)
 
         # Print info
         logger.info(
@@ -151,8 +192,8 @@ class ModelTpServer:
 
         # Init cache
         if (
-            server_args.chunked_prefill_size is not None
-            and server_args.disable_radix_cache
+            self.server_args.chunked_prefill_size is not None
+            and self.server_args.disable_radix_cache
         ):
             self.tree_cache = ChunkCache(
                 req_to_token_pool=self.model_runner.req_to_token_pool,
@@ -162,7 +203,7 @@ class ModelTpServer:
             self.tree_cache = RadixCache(
                 req_to_token_pool=self.model_runner.req_to_token_pool,
                 token_to_kv_pool=self.model_runner.token_to_kv_pool,
-                disable=server_args.disable_radix_cache,
+                disable=self.server_args.disable_radix_cache,
             )
         self.tree_cache_metrics = {"total": 0, "hit": 0}
         self.scheduler = PolicyScheduler(
@@ -175,38 +216,6 @@ class ModelTpServer:
         self.req_to_token_pool = self.model_runner.req_to_token_pool
         self.token_to_kv_pool = self.model_runner.token_to_kv_pool
 
-        # Init running status
-        self.waiting_queue: List[Req] = []
-        self.running_batch: Batch = None
-        self.out_pyobjs = []
-        self.decode_forward_ct = 0
-        self.stream_interval = server_args.stream_interval
-        self.num_generated_tokens = 0
-        self.last_stats_tic = time.time()
-
-        # Init the FSM cache for constrained generation
-        self.regex_fsm_cache = FSMCache(
-            server_args.tokenizer_paths[model_index],
-            {
-                "tokenizer_mode": server_args.tokenizer_mode,
-                "trust_remote_code": server_args.trust_remote_code,
-            },
-        )
-        self.jump_forward_cache = JumpForwardCache()
-
-        # Init new token estimation
-        assert (
-            server_args.schedule_conservativeness >= 0
-        ), "Invalid schedule_conservativeness"
-        self.min_new_token_ratio = min(
-            global_config.base_min_new_token_ratio
-            * server_args.schedule_conservativeness,
-            1.0,
-        )
-        self.new_token_ratio = self.min_new_token_ratio
-        self.new_token_ratio_decay = global_config.new_token_ratio_decay
-        self.new_token_ratio_recovery = global_config.new_token_ratio_recovery
-
     def exposed_step(self, recv_reqs):
         try:
             # Recv requests
@@ -217,11 +226,18 @@ class ModelTpServer:
                     self.flush_cache()
                 elif isinstance(recv_req, AbortReq):
                     self.abort_request(recv_req)
+                elif isinstance(recv_req, ActivateReq):
+                    self.model_runner.activate()
+                    if not self._activated:
+                        self._activate()
+                elif isinstance(recv_req, DeactivateReq):
+                    self.model_runner.deactivate(to_cpu=recv_req.to_cpu)
                 else:
                     raise ValueError(f"Invalid request: {recv_req}")
 
             # Forward
-            self.forward_step()
+            if self._activated:
+                self.forward_step()
         except Exception:
             logger.error("Exception in ModelTpServer:\n" + get_exception_traceback())
             raise
@@ -233,6 +249,7 @@ class ModelTpServer:
 
     @torch.inference_mode()
     def forward_step(self):
+        assert self._activated, "ModelTpServer has not been activated"
         new_batch = self.get_new_prefill_batch()
 
         if new_batch is not None:
@@ -647,7 +664,7 @@ class ModelTpServer:
                 # inflight request would get a new req idx
                 self.req_to_token_pool.free(int(req_pool_indices_cpu[i]))
 
-    def forward_decode_batch(self, batch: Batch):
+    def  forward_decode_batch(self, batch: Batch):
         # Check if decode out of memory
         if not batch.check_decode_mem():
             old_ratio = self.new_token_ratio

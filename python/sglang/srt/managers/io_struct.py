@@ -202,3 +202,24 @@ class AbortReq:
 @dataclass
 class DetokenizeReqInput:
     input_ids: List[int]
+
+
+@dataclass
+class DeactivateReq:
+    model_name: str
+    to_cpu: bool
+    rid: Optional[str] = None
+
+    def post_init(self):
+        if self.rid is None:
+            self.rid = uuid.uuid4().hex
+
+
+@dataclass
+class ActivateReq:
+    model_name: str
+    rid: Optional[str] = None
+
+    def post_init(self):
+        if self.rid is None:
+            self.rid = uuid.uuid4().hex

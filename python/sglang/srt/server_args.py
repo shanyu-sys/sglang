@@ -25,6 +25,7 @@ from typing import List, Optional, Union
 class ServerArgs:
     # Model and tokenizer
     model_paths: List[str]
+    init_scheduled_models: Optional[List[str]] = None
     tokenizer_paths: Optional[List[str]] = None
     tokenizer_mode: str = "auto"
     load_format: str = "auto"
@@ -92,6 +93,9 @@ class ServerArgs:
     def __post_init__(self):
         if self.tokenizer_paths is None:
             self.tokenizer_paths = self.model_paths
+        
+        if self.init_scheduled_models is None:
+            self.init_scheduled_models = self.model_paths
 
         if self.served_model_names is None:
             self.served_model_names = self.model_paths
@@ -128,6 +132,12 @@ class ServerArgs:
             type=str,
             help="The paths of the model weights. This can be a local folder or a Hugging Face repo ID.",
             required=True,
+        )
+        parser.add_argument(
+            "--init-scheduled-models",
+            nargs="+",
+            type=str,
+            help="The models to be initialized and scheduled at the beginning.",
         )
         parser.add_argument(
             "--tokenizer-paths",

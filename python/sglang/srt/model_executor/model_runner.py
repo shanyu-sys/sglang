@@ -62,6 +62,8 @@ from sglang.srt.utils import (
     monkey_patch_vllm_p2p_access_check,
     monkey_patch_vllm_qvk_linear_loader,
 )
+import time
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -127,18 +129,84 @@ class ModelRunner:
                     "The memory capacity is unbalanced. Some GPUs may be occupied by other processes."
                 )
 
-        # Load the model and create memory pool
-        self.load_model()
-        self.init_memory_pool(
-            total_gpu_memory,
-            server_args.max_num_reqs,
-            server_args.max_total_tokens,
-        )
+        # # Load the model and create memory pool
+        # self.load_model()
+        # self.init_memory_pool(
+        #     total_gpu_memory,
+        #     server_args.max_num_reqs,
+        #     server_args.max_total_tokens,
+        # )
         self.init_cublas()
         self.init_flash_infer()
 
         # Capture cuda graphs
         self.init_cuda_graphs()
+        self._activated = False
+        self._model_on_cpu = False
+
+    def activate(self):
+        assert self._activated is False
+
+        self._activated = True
+        if self._model_on_cpu:
+            self.model.to("cuda")
+            self._model_on_cpu = False
+        else:
+            self.load_model()
+
+        total_gpu_memory = get_available_gpu_memory(
+            self.gpu_id, distributed=self.tp_size > 1
+        )
+        self.init_memory_pool(
+            total_gpu_memory,
+            self.server_args.max_num_reqs,
+            self.server_args.max_total_tokens,
+        )
+
+    def deactivate(self, to_cpu=False):
+        """swap out model"""
+        # swap model in gpu to cpu, and then delete the model in gpu
+        self._swap_out_model(to_cpu=to_cpu)
+        self._free_memory_pool()
+
+    def _swap_out_model(self, to_cpu=False):
+        begin_swap = time.perf_counter()
+        logger.info(
+            f"[model_name={self.model_path}][gpu_id={self.gpu_id}] swap out model (to cpu {to_cpu}) begin."
+            f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+        )
+        if to_cpu and self.model is not None:
+            self.model.to("cpu")
+            self._model_on_cpu = True
+        else:
+            del self.model
+            self._model_on_cpu = False
+            self.model = None
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        self._activated = False
+        end_swap = time.perf_counter()
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Swap out model end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB, "
+            f"swap out model time: {end_swap - begin_swap:.2f} s"
+        )
+
+    def _free_memory_pool(self):
+        begin_free = time.perf_counter()
+        self.req_to_token_pool.empty()
+        self.token_to_kv_pool.empty()
+        del self.req_to_token_pool
+        del self.token_to_kv_pool
+        gc.collect()
+        torch.cuda.empty_cache()
+        end_free = time.perf_counter()
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Free memory pool end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+        )
+        logger.info(
+            f"[gpu_id={self.gpu_id}] Free memory pool time: {end_free - begin_free:.2f} s"
+        )
 
     def load_model(self):
         logger.info(
@@ -413,6 +481,7 @@ class ModelRunner:
         )
 
     def forward(self, batch: Batch, forward_mode: ForwardMode):
+        assert self._activated and self._model_on_cpu is False, "Model is not activated"
         if self.is_multimodal_model and forward_mode == ForwardMode.EXTEND:
             return self.forward_extend_multi_modal(batch)
         elif forward_mode == ForwardMode.DECODE:
