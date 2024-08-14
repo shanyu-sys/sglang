@@ -52,23 +52,25 @@ class Controller:
             self.model_unfinished_requests[model] = set()
 
         # initialize the model status
-        self._init_model_status()
+        asyncio.run(self._init_model_status())
 
         self.to_create_loop = True
 
         # TODO: remove this, and automatically compute the available memory
         self.available_memory = 24
 
-    def _init_model_status(self):
+    async def _init_model_status(self):
+        print("Initializing model status.")
         init_scheduled_models = self.server_args.init_scheduled_models
 
         for model in self.tokenizer_managers:
             if model not in init_scheduled_models:
                 self.model_status[model] = ModelStatus.OFF
             else:
-                self.tokenizer_managers[model].activate_model()
-                time.sleep(2)
+                print(f"Activating model {model} in _init_model_status.")
+                await self.tokenizer_managers[model].activate_model()
                 self.model_status[model] = ModelStatus.ACTIVE
+        print(f"Model status {self.model_status}")
 
     async def generate_request(self, obj: GenerateReqInput, request):
         if self.to_create_loop:
@@ -79,7 +81,7 @@ class Controller:
         # put the request into the queue corresponding to the model
         request_wrapper = RequestWrapper(obj, request)
         model = obj.model
-        self.model_queues[model].put(request_wrapper)
+        await self.model_queues[model].put(request_wrapper)
 
         send_future = await request_wrapper.send_to_tokenizer_manager
         try:
@@ -108,12 +110,14 @@ class Controller:
             for model in self.model_queues:
                 if self.model_status[model] == ModelStatus.ACTIVE:
                     await self._process_model_queue(model)
+            await asyncio.sleep(0.1)
 
-    async def may_switch_model(self, model):
+    async def may_switch_model(self):
         for model, queue in self.model_queues.items():
             if self.model_status[model] == ModelStatus.OFF:
                 # check if the model should be switched on
                 if self.should_switch_on_model(model, queue):
+                    print(f"Switching on model {model}")
                     await self.switch_on_model(model)
 
             elif self.model_status[model] == ModelStatus.ACTIVE:
@@ -143,20 +147,23 @@ class Controller:
     
     def should_switch_off_model(self, model, queue):
         # If no requests in its queue, and no unfinshed requests
-        if queue.qsize() == 0 and len(self.model_unfinished_requests[model]) == 0:
-            return True
+        # if queue.qsize() == 0 and len(self.model_unfinished_requests[model]) == 0:
+        #     return True
         return False
+        # return True
 
     async def switch_off_model(self, model):
+        print(f"Switching off model {model}")
         tokenizer_manager = self.tokenizer_managers[model]
         self.model_status[model] = ModelStatus.IN_TRANSIT
         out = await tokenizer_manager.deactivate_model(to_cpu=False)
         self.model_status[model] = ModelStatus.OFF
+        print(f"model {model} is switched off.")
         return out
 
     def should_switch_on_model(self, model, queue):
         # TODO: check arrival time of the first req in queue.
-        if queue.qsize >= 10:
+        if queue.qsize() >= 10:
             return True
         return False
 
@@ -171,6 +178,7 @@ class Controller:
         return active_models[0]
 
     async def switch_on_model(self, model):
+        print(f"Switching on model {model}")
         # TODO: switch off multiple models until enough memory is available
         if get_available_memory(memory=0) < get_memory_needed(model):
             victim_model = self.get_victim_model()
@@ -178,8 +186,10 @@ class Controller:
 
         tokenizer = self.tokenizer_managers[model]
         self.model_status[model] = ModelStatus.IN_TRANSIT
+        print(f"Activating model {model} in switch_on_model.")
         out = await tokenizer.activate_model()
         self.model_status[model] = ModelStatus.ACTIVE
+        print(f"model {model} is switched on.")
         return out
 
     def should_expand_memory_pool(self, model, queue):

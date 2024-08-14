@@ -190,6 +190,13 @@ class BatchStrOut:
 
 
 @dataclass
+class AlterModelOut:
+    rids: List[str]
+    success: bool
+    alter_type: str
+
+
+@dataclass
 class FlushCacheReq:
     pass
 

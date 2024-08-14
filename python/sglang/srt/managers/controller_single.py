@@ -31,6 +31,7 @@ from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import kill_parent_process
 from sglang.utils import get_exception_traceback
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,6 +109,8 @@ class ControllerSingle:
 
             for obj in out_pyobjs:
                 self.send_to_detokenizer.send_pyobj(obj)
+                # if isinstance(obj, AlterModelOut):
+                print(f"{obj} Sent to detokenizer from controller")
 
     def recv_requests_from_zmq(self):
         recv_reqs = []

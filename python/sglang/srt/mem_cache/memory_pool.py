@@ -18,6 +18,7 @@ limitations under the License.
 import logging
 
 import torch
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,13 @@ class ReqToTokenPool:
     def clear(self):
         self.mem_state.fill_(True)
         self.can_use_mem_size = len(self.mem_state)
+    
+    def empty(self):
+        # free the gpu memory allocated by the pool
+        self.mem_state = None
+        self.req_to_token = None
+        gc.collect()
+        torch.cuda.empty_cache()
 
 
 class BaseTokenToKVPool:
@@ -148,6 +156,13 @@ class MHATokenToKVPool(BaseTokenToKVPool):
 
     def get_kv_buffer(self, layer_id: int):
         return self.k_buffer[layer_id], self.v_buffer[layer_id]
+    
+    def empty(self):
+        # free the gpu memory allocated by the pool
+        self.k_buffer = None
+        self.v_buffer = None
+        gc.collect()
+        torch.cuda.empty_cache()
 
 
 class MLATokenToKVPool(BaseTokenToKVPool):
@@ -180,3 +195,9 @@ class MLATokenToKVPool(BaseTokenToKVPool):
 
     def get_kv_buffer(self, layer_id: int):
         return self.get_key_buffer(layer_id), self.get_value_buffer(layer_id)
+
+    def empty(self):
+        # free the gpu memory allocated by the pool
+        self.kv_buffer = None
+        gc.collect()
+        torch.cuda.empty_cache()

@@ -25,7 +25,7 @@ import zmq
 import zmq.asyncio
 
 from sglang.srt.hf_transformers_utils import get_tokenizer
-from sglang.srt.managers.io_struct import BatchStrOut, BatchTokenIDOut
+from sglang.srt.managers.io_struct import BatchStrOut, BatchTokenIDOut, AlterModelOut
 from sglang.srt.managers.schedule_batch import FINISH_MATCHED_STR
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.utils import find_printable_text, get_exception_traceback, graceful_registry
@@ -66,74 +66,88 @@ class DetokenizerManager:
 
     async def handle_loop(self):
         while True:
-            recv_obj: BatchTokenIDOut = await self.recv_from_router.recv_pyobj()
-            assert isinstance(recv_obj, BatchTokenIDOut)
-            bs = len(recv_obj.rids)
+            recv_obj = await self.recv_from_router.recv_pyobj()
+            if isinstance(recv_obj, BatchTokenIDOut):
+                self.handle_generation_requests(recv_obj)
+            elif isinstance(recv_obj, AlterModelOut):
+                self.handle_alter_model(recv_obj)
+            else:
+                raise ValueError(f"Unknown message type: {type(recv_obj)}")
+    
+    def handle_generation_requests(self, recv_obj: BatchTokenIDOut):
+        assert isinstance(recv_obj, BatchTokenIDOut)
+        print(f"{recv_obj} is received by detokenizer")
+        bs = len(recv_obj.rids)
 
-            # Initialize decode status
-            read_ids, surr_ids = [], []
-            for i in range(bs):
-                rid = recv_obj.rids[i]
-                vid = recv_obj.vids[i]
-                if rid not in self.decode_status or self.decode_status[rid].vid != vid:
-                    s = DecodeStatus(
-                        vid=vid,
-                        decoded_text=recv_obj.decoded_texts[i],
-                        decode_ids=recv_obj.decode_ids[i],
-                        surr_offset=0,
-                        read_offset=recv_obj.read_offsets[i],
-                    )
-                    self.decode_status[rid] = s
-                else:
-                    s = self.decode_status[rid]
-                    s.decode_ids = recv_obj.decode_ids[i]
-
-                read_ids.append(s.decode_ids[s.surr_offset :])
-                surr_ids.append(s.decode_ids[s.surr_offset : s.read_offset])
-
-            # TODO(lmzheng): handle skip_special_tokens/spaces_between_special_tokens per request
-            surr_texts = self.tokenizer.batch_decode(
-                surr_ids,
-                skip_special_tokens=recv_obj.skip_special_tokens[0],
-                spaces_between_special_tokens=recv_obj.spaces_between_special_tokens[0],
-            )
-            read_texts = self.tokenizer.batch_decode(
-                read_ids,
-                skip_special_tokens=recv_obj.skip_special_tokens[0],
-                spaces_between_special_tokens=recv_obj.spaces_between_special_tokens[0],
-            )
-
-            # Trim stop str
-            # TODO(lmzheng): handle the case where multiple stop strs are hit
-            output_strs = []
-            for i in range(bs):
-                s = self.decode_status[recv_obj.rids[i]]
-                new_text = read_texts[i][len(surr_texts[i]) :]
-                if recv_obj.finished_reason[i] is None:
-                    # Streaming chunk: update the decode status
-                    if len(new_text) > 0 and not new_text.endswith("�"):
-                        s.decoded_text = s.decoded_text + new_text
-                        s.surr_offset = s.read_offset
-                        s.read_offset = len(s.decode_ids)
-                        new_text = ""
-                    else:
-                        new_text = find_printable_text(new_text)
-
-                output_strs.append(s.decoded_text + new_text)
-
-                if isinstance(recv_obj.finished_reason[i], FINISH_MATCHED_STR):
-                    pos = output_strs[i].find(recv_obj.finished_reason[i].matched)
-                    if pos != -1:
-                        output_strs[i] = output_strs[i][:pos]
-
-            self.send_to_tokenizer.send_pyobj(
-                BatchStrOut(
-                    rids=recv_obj.rids,
-                    output_strs=output_strs,
-                    meta_info=recv_obj.meta_info,
-                    finished_reason=recv_obj.finished_reason,
+        # Initialize decode status
+        read_ids, surr_ids = [], []
+        for i in range(bs):
+            rid = recv_obj.rids[i]
+            vid = recv_obj.vids[i]
+            if rid not in self.decode_status or self.decode_status[rid].vid != vid:
+                s = DecodeStatus(
+                    vid=vid,
+                    decoded_text=recv_obj.decoded_texts[i],
+                    decode_ids=recv_obj.decode_ids[i],
+                    surr_offset=0,
+                    read_offset=recv_obj.read_offsets[i],
                 )
+                self.decode_status[rid] = s
+            else:
+                s = self.decode_status[rid]
+                s.decode_ids = recv_obj.decode_ids[i]
+
+            read_ids.append(s.decode_ids[s.surr_offset :])
+            surr_ids.append(s.decode_ids[s.surr_offset : s.read_offset])
+
+        # TODO(lmzheng): handle skip_special_tokens/spaces_between_special_tokens per request
+        surr_texts = self.tokenizer.batch_decode(
+            surr_ids,
+            skip_special_tokens=recv_obj.skip_special_tokens[0],
+            spaces_between_special_tokens=recv_obj.spaces_between_special_tokens[0],
+        )
+        read_texts = self.tokenizer.batch_decode(
+            read_ids,
+            skip_special_tokens=recv_obj.skip_special_tokens[0],
+            spaces_between_special_tokens=recv_obj.spaces_between_special_tokens[0],
+        )
+
+        # Trim stop str
+        # TODO(lmzheng): handle the case where multiple stop strs are hit
+        output_strs = []
+        for i in range(bs):
+            s = self.decode_status[recv_obj.rids[i]]
+            new_text = read_texts[i][len(surr_texts[i]) :]
+            if recv_obj.finished_reason[i] is None:
+                # Streaming chunk: update the decode status
+                if len(new_text) > 0 and not new_text.endswith("�"):
+                    s.decoded_text = s.decoded_text + new_text
+                    s.surr_offset = s.read_offset
+                    s.read_offset = len(s.decode_ids)
+                    new_text = ""
+                else:
+                    new_text = find_printable_text(new_text)
+
+            output_strs.append(s.decoded_text + new_text)
+
+            if isinstance(recv_obj.finished_reason[i], FINISH_MATCHED_STR):
+                pos = output_strs[i].find(recv_obj.finished_reason[i].matched)
+                if pos != -1:
+                    output_strs[i] = output_strs[i][:pos]
+
+        print(f"{recv_obj} Sent to tokenizer from detokenizer")
+        self.send_to_tokenizer.send_pyobj(
+            BatchStrOut(
+                rids=recv_obj.rids,
+                output_strs=output_strs,
+                meta_info=recv_obj.meta_info,
+                finished_reason=recv_obj.finished_reason,
             )
+        )
+
+    def handle_alter_model(self, recv_obj: AlterModelOut):
+        print(f"{recv_obj} Received and Sent to tokenizer from detokenizer")
+        self.send_to_tokenizer.send_pyobj(recv_obj)
 
 
 def start_detokenizer_process(

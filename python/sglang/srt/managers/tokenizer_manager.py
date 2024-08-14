@@ -45,6 +45,7 @@ from sglang.srt.managers.io_struct import (
     TokenizedGenerateReqInput,
     DeactivateReq,
     ActivateReq,
+    AlterModelOut,
 )
 from sglang.srt.mm_utils import expand2square, process_anyres_image
 from sglang.srt.sampling_params import SamplingParams
@@ -329,6 +330,7 @@ class TokenizerManager:
 
                 while True:
                     try:
+                        print("before wait for response of handle_batch_request")
                         await asyncio.wait_for(state.event.wait(), timeout=4)
                         break
                     except asyncio.TimeoutError:
@@ -382,6 +384,7 @@ class TokenizerManager:
     ):
         while True:
             try:
+                print("before wait for response")
                 await asyncio.wait_for(event.wait(), timeout=4)
             except asyncio.TimeoutError:
                 if request is not None and await request.is_disconnected():
@@ -423,6 +426,7 @@ class TokenizerManager:
     ):
         while True:
             try:
+                print("before wait for cache prefill response")
                 await asyncio.wait_for(state.event.wait(), timeout=4)
                 break
             except asyncio.TimeoutError:
@@ -448,16 +452,22 @@ class TokenizerManager:
     
     async def deactivate_model(self, to_cpu: bool = False):
         deactivate_req = DeactivateReq(self.served_model_name, to_cpu)
-        ret = await self._send_req_and_wait_for_response(deactivate_req, "deactivate")
+        deactivate_req.post_init()
+        ret = await self._send_req_and_wait_for_response(deactivate_req)
         return ret
 
-    def activate_model(self):
+    async def activate_model(self):
+        if self.to_create_loop:
+            self.create_handle_loop()
         activate_req = ActivateReq(self.served_model_name)
-        self.send_to_router.send_pyobj(activate_req)
-        # ret = await self._send_req_and_wait_for_response(activate_req, "activate")
-        # return ret
+        activate_req.post_init()
+        print("activate_req sent by tokenizer manager ", activate_req)
+        ret = await self._send_req_and_wait_for_response(activate_req)
+        print("activate_req received by tokenizer manager ", ret)
+        return ret
     
-    async def _send_req_and_wait_for_response(self, obj, rid: str):
+    async def _send_req_and_wait_for_response(self, obj):
+        rid = obj.rid
         self.send_to_router.send_pyobj(obj)
 
         event = asyncio.Event()
@@ -465,16 +475,17 @@ class TokenizerManager:
         self.rid_to_state[rid] = state
 
         while True:
+            print("before wait for response of _send_req_and_wait_for_response")
             try:
-                asyncio.wait_for(state.event.wait(), timeout=4)
+                await asyncio.wait_for(state.event.wait(), timeout=4)
                 break
             except asyncio.TimeoutError:
                 continue
+        print("after wait for response of _send_req_and_wait_for_response")
 
         assert state.finished
         out = state.out_list[-1]
         del self.rid_to_state[rid]
-        print(out)
         return out
 
     def create_abort_task(self, obj: GenerateReqInput):
@@ -498,22 +509,44 @@ class TokenizerManager:
 
     async def handle_loop(self):
         while True:
-            recv_obj: BatchTokenIDOut = await self.recv_from_detokenizer.recv_pyobj()
-            assert isinstance(recv_obj, BatchStrOut)
+            print("BEGIN handle_loop, self.recv_from_detokenizer: ", self.recv_from_detokenizer)
+            recv_obj = await self.recv_from_detokenizer.recv_pyobj()
+            # recv_obj = await asyncio.wait_for(self.recv_from_detokenizer.recv_pyobj(), timeout=4)
 
-            for i, rid in enumerate(recv_obj.rids):
-                state = self.rid_to_state.get(rid, None)
-                if state is None:
-                    continue
+            print(f"Received object by tokenizer manager: {recv_obj}")
+            if isinstance(recv_obj, BatchStrOut):
+                self._handle_generate_response(recv_obj)
+            elif isinstance(recv_obj, AlterModelOut):
+                self._handle_alter_model_response(recv_obj)
+            else:
+                raise ValueError(f"Unknown message type: {type(recv_obj)}")
+            print("END handle_loop")
 
-                recv_obj.meta_info[i]["id"] = rid
-                out_dict = {
-                    "text": recv_obj.output_strs[i],
-                    "meta_info": recv_obj.meta_info[i],
-                }
-                state.out_list.append(out_dict)
-                state.finished = recv_obj.finished_reason[i] is not None
-                state.event.set()
+    def _handle_generate_response(self, recv_obj: BatchStrOut):
+        for i, rid in enumerate(recv_obj.rids):
+            state = self.rid_to_state.get(rid, None)
+            if state is None:
+                continue
+
+            recv_obj.meta_info[i]["id"] = rid
+            out_dict = {
+                "text": recv_obj.output_strs[i],
+                "meta_info": recv_obj.meta_info[i],
+            }
+            state.out_list.append(out_dict)
+            state.finished = recv_obj.finished_reason[i] is not None
+            state.event.set()
+
+    def _handle_alter_model_response(self, recv_obj: AlterModelOut):
+        for i, rid in enumerate(recv_obj.rids):
+            print(f"alter_model response with rid received by tokenizer: {rid}")
+            state = self.rid_to_state.get(rid, None)
+            if state is None:
+                continue
+
+            state.out_list.append(recv_obj.success)
+            state.finished = True
+            state.event.set()
 
     def convert_logprob_style(
         self,

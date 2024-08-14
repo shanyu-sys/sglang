@@ -144,7 +144,10 @@ class ModelRunner:
         self._activated = False
         self._model_on_cpu = False
 
+        # self.activate()
+
     def activate(self):
+        success = False
         assert self._activated is False
 
         self._activated = True
@@ -162,12 +165,22 @@ class ModelRunner:
             self.server_args.max_num_reqs,
             self.server_args.max_total_tokens,
         )
+        logger.info(
+            f"[{self.model_path}]"
+            f"[gpu={self.gpu_id}] Model activated. "
+            f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+        )
+        success = True
+        return success
 
     def deactivate(self, to_cpu=False):
         """swap out model"""
         # swap model in gpu to cpu, and then delete the model in gpu
+        success = False
         self._swap_out_model(to_cpu=to_cpu)
         self._free_memory_pool()
+        success = True
+        return success
 
     def _swap_out_model(self, to_cpu=False):
         begin_swap = time.perf_counter()

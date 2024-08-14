@@ -369,6 +369,7 @@ def _set_envs_and_config(server_args: ServerArgs):
 def _wait_and_warmup(server_args, pipe_finish_writer):
     headers = {}
     url = server_args.url()
+    logger.info(f"Warm up for the server to be launched at {url}...")
     if server_args.api_key:
         headers["Authorization"] = f"Bearer {server_args.api_key}"
 
@@ -382,28 +383,29 @@ def _wait_and_warmup(server_args, pipe_finish_writer):
             pass
 
     # Send a warmup request
-    try:
-        for _ in range(server_args.dp_size):
-            for i in range(len(server_args.model_paths)):
-                res = requests.post(
-                    url + "/generate",
-                    json={
-                        "text": "The capital city of France is",
-                        "sampling_params": {
-                            "temperature": 0,
-                            "max_new_tokens": 8,
+    for _ in range(2):
+        try:
+            for _ in range(server_args.dp_size):
+                for i in range(len(server_args.model_paths)):
+                    res = requests.post(
+                        url + "/generate",
+                        json={
+                            "text": "The capital city of France is",
+                            "sampling_params": {
+                                "temperature": 0,
+                                "max_new_tokens": 8,
+                            },
+                            "model": server_args.model_paths[i],
                         },
-                        "model": server_args.model_paths[i],
-                    },
-                    headers=headers,
-                    timeout=600,
-                )
-                assert res.status_code == 200
-    except Exception as e:
-        if pipe_finish_writer is not None:
-            pipe_finish_writer.send(get_exception_traceback())
-        print(f"Initialization failed. warmup error: {e}", flush=True)
-        raise e
+                        headers=headers,
+                        timeout=600,
+                    )
+                    assert res.status_code == 200
+        except Exception as e:
+            if pipe_finish_writer is not None:
+                pipe_finish_writer.send(get_exception_traceback())
+            print(f"Initialization failed. warmup error: {e}", flush=True)
+            raise e
 
     logger.info("The server is fired up and ready to roll!")
     if pipe_finish_writer is not None:

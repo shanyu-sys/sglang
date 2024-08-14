@@ -36,6 +36,7 @@ from sglang.srt.managers.io_struct import (
     TokenizedGenerateReqInput,
     DeactivateReq,
     ActivateReq,
+    AlterModelOut,
 )
 from sglang.srt.managers.policy_scheduler import PolicyScheduler
 from sglang.srt.managers.schedule_batch import (
@@ -153,6 +154,7 @@ class ModelTpServer:
         self.new_token_ratio_recovery = global_config.new_token_ratio_recovery
 
         self._activated = False
+        # self._activate()
 
     def _activate(self):
         assert not self._activated, "ModelTpServer has already been activated"
@@ -227,11 +229,9 @@ class ModelTpServer:
                 elif isinstance(recv_req, AbortReq):
                     self.abort_request(recv_req)
                 elif isinstance(recv_req, ActivateReq):
-                    self.model_runner.activate()
-                    if not self._activated:
-                        self._activate()
+                    self.activate_model_runner(recv_req)
                 elif isinstance(recv_req, DeactivateReq):
-                    self.model_runner.deactivate(to_cpu=recv_req.to_cpu)
+                    self.deactivate_model_runner(recv_req)
                 else:
                     raise ValueError(f"Invalid request: {recv_req}")
 
@@ -325,6 +325,7 @@ class ModelTpServer:
         self,
         recv_req: TokenizedGenerateReqInput,
     ):
+        assert self._activated, "ModelTpServer has not been activated"
         req = Req(recv_req.rid, recv_req.input_text, recv_req.input_ids)
         req.pixel_values = recv_req.pixel_values
         if req.pixel_values is not None:
@@ -868,6 +869,32 @@ class ModelTpServer:
                 if req.rid == recv_req.rid:
                     req.finished_reason = FINISH_ABORT()
                     break
+
+    def activate_model_runner(self, recv_req):
+        target_model_path = recv_req.model_name
+
+        success = self.model_runner.activate()
+        if not self._activated:
+            self._activate()
+        out = AlterModelOut(
+            rids=[recv_req.rid],
+            success=success,
+            alter_type="activate",
+        )
+        self.out_pyobjs.append(out)
+
+    def deactivate_model_runner(self, recv_req):
+        target_model_path = recv_req.model_name
+
+        to_cpu = recv_req.to_cpu
+        rid = recv_req.rid
+        success = self.model_runner.deactivate(to_cpu)
+        out = AlterModelOut(
+            rids=[rid],
+            success=success,
+            alter_type="deactivate",
+        )
+        self.out_pyobjs.append(out)
 
 
 def run_tp_server(
