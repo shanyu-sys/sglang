@@ -110,7 +110,7 @@ class ControllerSingle:
             for obj in out_pyobjs:
                 self.send_to_detokenizer.send_pyobj(obj)
                 # if isinstance(obj, AlterModelOut):
-                print(f"{obj} Sent to detokenizer from controller")
+                # print(f"{obj} Sent to detokenizer from controller")
 
     def recv_requests_from_zmq(self):
         recv_reqs = []

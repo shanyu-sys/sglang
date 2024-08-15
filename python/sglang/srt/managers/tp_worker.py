@@ -231,13 +231,16 @@ class ModelTpServer:
                 elif isinstance(recv_req, ActivateReq):
                     self.activate_model_runner(recv_req)
                 elif isinstance(recv_req, DeactivateReq):
+                    self.forward_step()
                     self.deactivate_model_runner(recv_req)
+                    break
                 else:
                     raise ValueError(f"Invalid request: {recv_req}")
 
             # Forward
             if self._activated:
                 self.forward_step()
+
         except Exception:
             logger.error("Exception in ModelTpServer:\n" + get_exception_traceback())
             raise

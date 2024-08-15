@@ -76,7 +76,7 @@ class DetokenizerManager:
     
     def handle_generation_requests(self, recv_obj: BatchTokenIDOut):
         assert isinstance(recv_obj, BatchTokenIDOut)
-        print(f"{recv_obj} is received by detokenizer")
+        # print(f"{recv_obj} is received by detokenizer")
         bs = len(recv_obj.rids)
 
         # Initialize decode status
@@ -135,7 +135,7 @@ class DetokenizerManager:
                 if pos != -1:
                     output_strs[i] = output_strs[i][:pos]
 
-        print(f"{recv_obj} Sent to tokenizer from detokenizer")
+        # print(f"{recv_obj} Sent to tokenizer from detokenizer")
         self.send_to_tokenizer.send_pyobj(
             BatchStrOut(
                 rids=recv_obj.rids,
@@ -146,7 +146,7 @@ class DetokenizerManager:
         )
 
     def handle_alter_model(self, recv_obj: AlterModelOut):
-        print(f"{recv_obj} Received and Sent to tokenizer from detokenizer")
+        # print(f"{recv_obj} Received and Sent to tokenizer from detokenizer")
         self.send_to_tokenizer.send_pyobj(recv_obj)
 
 

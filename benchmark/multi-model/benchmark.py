@@ -154,7 +154,7 @@ def compute_stats(benchmark_latency: float):
     return result
 
 
-def run(trace_config, backend, debug):
+def run(trace_config, backend, server, debug):
     # get requests
     requests = generate_synthetic_reqs(trace_config)
 
@@ -165,7 +165,7 @@ def run(trace_config, backend, debug):
 
     # benchmark
     benchmark_start_time = time.perf_counter()
-    asyncio.run(benchmark(backend, requests, debug))
+    asyncio.run(benchmark(backend, requests, server, debug))
     benchmark_end_time = time.perf_counter()
     benchmark_latency = benchmark_end_time - benchmark_start_time
 
@@ -184,6 +184,8 @@ if __name__ == "__main__":
         default="srt",
         choices=["srt"],
     )
+    parser.add_argument("--host", type=str, default="localhost")
+    parser.add_argument("--port", type=int, default=30000)
 
     parser.add_argument("--dataset", type=str, help="Path to the dataset.")
     parser.add_argument("--debug", action="store_true")
@@ -194,6 +196,8 @@ if __name__ == "__main__":
 
 
     args = parser.parse_args()
+
+    server = f"http://{args.host}:{args.port}"
 
     trace_config = TraceConfig(
         req_rate=2,  # 2 requests per second
@@ -207,7 +211,7 @@ if __name__ == "__main__":
     )
 
 
-    metrics = run(trace_config, args.backend, args.debug)
+    metrics = run(trace_config, args.backend, server, args.debug)
     with open(args.output, "a" if args.append else "w") as f:
         # write the trace config
         f.write(json.dumps(trace_config.__dict__) + "\n")

@@ -121,6 +121,9 @@ class TokenizerManager:
         self.to_create_loop = True
         self.rid_to_state: Dict[str, ReqState] = {}
 
+        self.background_tasks = set()
+        self.alter_rid_to_state: Dict[str, ReqState] = {}
+
     async def get_pixel_values(self, image_data):
         aspect_ratio = getattr(self.hf_config, "image_aspect_ratio", None)
         grid_pinpoints = (
@@ -330,7 +333,7 @@ class TokenizerManager:
 
                 while True:
                     try:
-                        print("before wait for response of handle_batch_request")
+                        # print("before wait for response of handle_batch_request")
                         await asyncio.wait_for(state.event.wait(), timeout=4)
                         break
                     except asyncio.TimeoutError:
@@ -384,7 +387,6 @@ class TokenizerManager:
     ):
         while True:
             try:
-                print("before wait for response")
                 await asyncio.wait_for(event.wait(), timeout=4)
             except asyncio.TimeoutError:
                 if request is not None and await request.is_disconnected():
@@ -426,7 +428,7 @@ class TokenizerManager:
     ):
         while True:
             try:
-                print("before wait for cache prefill response")
+                # print("before wait for cache prefill response")
                 await asyncio.wait_for(state.event.wait(), timeout=4)
                 break
             except asyncio.TimeoutError:
@@ -457,31 +459,73 @@ class TokenizerManager:
         return ret
 
     async def activate_model(self):
-        if self.to_create_loop:
-            self.create_handle_loop()
         activate_req = ActivateReq(self.served_model_name)
         activate_req.post_init()
-        print("activate_req sent by tokenizer manager ", activate_req)
-        ret = await self._send_req_and_wait_for_response(activate_req)
-        print("activate_req received by tokenizer manager ", ret)
-        return ret
+        # send activate req to router
+        self.send_to_router.send_pyobj(activate_req)
+
+        if self.to_create_loop:
+            # assert that the activate response will not be batched with other generation responses
+            recv_obj = await asyncio.wait_for(self.recv_from_detokenizer.recv_pyobj(), timeout=4)
+            return
+        else:
+            event = asyncio.Event()
+            state = ReqState([], False, event)
+            self.alter_rid_to_state[activate_req.rid] = state
+            while True:
+                try:
+                    await asyncio.wait_for(state.event.wait(), timeout=4)
+                    break
+                except asyncio.TimeoutError:
+                    continue
+            
+            assert state.finished
+            out = state.out_list[-1]
+            del self.alter_rid_to_state[activate_req.rid]
+            return out
+
+    # async def activate_model(self):
+    #     if self.to_create_loop:
+    #         self.create_handle_loop()
+    #     activate_req = ActivateReq(self.served_model_name)
+    #     activate_req.post_init()
+
+    #     self.send_to_router.send_pyobj(activate_req)
+
+    #     event = asyncio.Event()
+    #     state = ReqState([], False, event)
+    #     self.alter_rid_to_state[activate_req.rid] = state
+
+    #     while True:
+    #         try:
+    #             await asyncio.wait_for(state.event.wait(), timeout=4)
+    #             break
+    #         except asyncio.TimeoutError:
+    #             continue
+        
+    #     assert state.finished
+    #     out = state.out_list[-1]
+    #     del self.alter_rid_to_state[activate_req.rid]
+    #     print("activate model response received by tokenizer: ", out)
+    #     return out
     
     async def _send_req_and_wait_for_response(self, obj):
         rid = obj.rid
         self.send_to_router.send_pyobj(obj)
+        # print("req sent by tokenizer manager ", obj)
 
         event = asyncio.Event()
         state = ReqState([], False, event)
         self.rid_to_state[rid] = state
 
         while True:
-            print("before wait for response of _send_req_and_wait_for_response")
+            # print("before wait for response of _send_req_and_wait_for_response")
             try:
                 await asyncio.wait_for(state.event.wait(), timeout=4)
                 break
             except asyncio.TimeoutError:
                 continue
-        print("after wait for response of _send_req_and_wait_for_response")
+        # print("after wait for response of _send_req_and_wait_for_response")
 
         assert state.finished
         out = state.out_list[-1]
@@ -505,22 +549,30 @@ class TokenizerManager:
     def create_handle_loop(self):
         self.to_create_loop = False
         loop = asyncio.get_event_loop()
+        # task = loop.create_task(self.handle_loop())
+        # self.background_tasks.add(task)
         loop.create_task(self.handle_loop())
 
     async def handle_loop(self):
-        while True:
-            print("BEGIN handle_loop, self.recv_from_detokenizer: ", self.recv_from_detokenizer)
-            recv_obj = await self.recv_from_detokenizer.recv_pyobj()
-            # recv_obj = await asyncio.wait_for(self.recv_from_detokenizer.recv_pyobj(), timeout=4)
+        # poller = zmq.asyncio.Poller()
+        # poller.register(self.recv_from_detokenizer, zmq.POLLIN)
 
-            print(f"Received object by tokenizer manager: {recv_obj}")
+        while True:
+            recv_obj = await self.recv_from_detokenizer.recv_pyobj()
+            # print("recevied obj from detokenizer: ", recv_obj)
+            # events = await poller.poll(timeout=4000)  # Timeout in milliseconds
+
+            # if events:
+            #     recv_obj = await self.recv_from_detokenizer.recv_pyobj()
+            # else:
+            #     continue
+
             if isinstance(recv_obj, BatchStrOut):
                 self._handle_generate_response(recv_obj)
             elif isinstance(recv_obj, AlterModelOut):
                 self._handle_alter_model_response(recv_obj)
             else:
                 raise ValueError(f"Unknown message type: {type(recv_obj)}")
-            print("END handle_loop")
 
     def _handle_generate_response(self, recv_obj: BatchStrOut):
         for i, rid in enumerate(recv_obj.rids):
@@ -540,7 +592,7 @@ class TokenizerManager:
     def _handle_alter_model_response(self, recv_obj: AlterModelOut):
         for i, rid in enumerate(recv_obj.rids):
             print(f"alter_model response with rid received by tokenizer: {rid}")
-            state = self.rid_to_state.get(rid, None)
+            state = self.alter_rid_to_state.get(rid, None)
             if state is None:
                 continue
 

@@ -19,12 +19,20 @@ class TraceConfig:
     input_range: tuple[int, int]
     output_range: tuple[int, int]
     model_paths: list[str]
-    tokenizer_paths: list[str]
     seed: int
+    tokenizer_paths: Optional[list[str]] = None
 
     # for synthetic requests
     alpha: Optional[float] = None
     cv: Optional[float] = None
+
+    def __post_init__(self):
+        if self.alpha is None:
+            self.alpha = 0.1
+        if self.cv is None:
+            self.cv = 1
+        if self.tokenizer_paths is None:
+            self.tokenizer_paths = self.model_paths
 
 
 def dummy_prompt(prompt_len):
@@ -65,7 +73,6 @@ def generate_synthetic_reqs(
             output_len=output_lens[i],
             arrival_time=timestamps[i],
             model=config.model_paths[model_indices[i]],
-            tokenizer=config.tokenizer_paths[tokenizer_indices[i]],
         )
         requests.append(req)
     return requests

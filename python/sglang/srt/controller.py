@@ -17,7 +17,6 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from http import HTTPStatus
 
 
-
 class ModelStatus(enum.Enum):
     """Model status."""
     ACTIVE = enum.auto()  # ON_GPU
@@ -59,6 +58,8 @@ class Controller:
         # TODO: remove this, and automatically compute the available memory
         self.available_memory = 24
 
+        self.background_tasks = set()
+
     async def _init_model_status(self):
         print("Initializing model status.")
         init_scheduled_models = self.server_args.init_scheduled_models
@@ -95,9 +96,11 @@ class Controller:
 
     def _create_loop(self):
         self.to_create_loop = False
-        asyncio.create_task(self.process_request_loop())
-        asyncio.create_task(self.switch_model_loop())
-
+        loop = asyncio.get_event_loop()
+        task1 = loop.create_task(self.process_request_loop())
+        self.background_tasks.add(task1)
+        task2 = loop.create_task(self.switch_model_loop())
+        self.background_tasks.add(task2)
 
     async def switch_model_loop(self):
         # TODO: enable multiple models to be switched on/off at the same time
@@ -163,8 +166,8 @@ class Controller:
 
     def should_switch_on_model(self, model, queue):
         # TODO: check arrival time of the first req in queue.
-        if queue.qsize() >= 10:
-            return True
+        # if queue.qsize() >= 10:
+        #     return True
         return False
 
     def _get_active_models(self):

@@ -150,16 +150,17 @@ class ModelRunner:
         success = False
         assert self._activated is False
 
-        self._activated = True
+        total_gpu_memory = get_available_gpu_memory(
+            self.gpu_id, distributed=self.tp_size > 1
+        )
+
         if self._model_on_cpu:
             self.model.to("cuda")
             self._model_on_cpu = False
         else:
             self.load_model()
 
-        total_gpu_memory = get_available_gpu_memory(
-            self.gpu_id, distributed=self.tp_size > 1
-        )
+
         self.init_memory_pool(
             total_gpu_memory,
             self.server_args.max_num_reqs,
@@ -170,6 +171,7 @@ class ModelRunner:
             f"[gpu={self.gpu_id}] Model activated. "
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )
+        self._activated = True
         success = True
         return success
 
