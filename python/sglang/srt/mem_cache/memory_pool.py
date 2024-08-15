@@ -15,10 +15,10 @@ limitations under the License.
 
 """Memory pool."""
 
+import gc
 import logging
 
 import torch
-import gc
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class ReqToTokenPool:
     def clear(self):
         self.mem_state.fill_(True)
         self.can_use_mem_size = len(self.mem_state)
-    
+
     def empty(self):
         # free the gpu memory allocated by the pool
         self.mem_state = None
@@ -156,7 +156,7 @@ class MHATokenToKVPool(BaseTokenToKVPool):
 
     def get_kv_buffer(self, layer_id: int):
         return self.k_buffer[layer_id], self.v_buffer[layer_id]
-    
+
     def empty(self):
         # free the gpu memory allocated by the pool
         self.k_buffer = None

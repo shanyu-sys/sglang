@@ -93,7 +93,7 @@ class ServerArgs:
     def __post_init__(self):
         if self.tokenizer_paths is None:
             self.tokenizer_paths = self.model_paths
-        
+
         if self.init_scheduled_models is None:
             self.init_scheduled_models = self.model_paths
 

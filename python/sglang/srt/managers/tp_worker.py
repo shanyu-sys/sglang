@@ -31,12 +31,12 @@ from sglang.srt.constrained.jump_forward import JumpForwardCache
 from sglang.srt.hf_transformers_utils import get_processor, get_tokenizer
 from sglang.srt.managers.io_struct import (
     AbortReq,
-    BatchTokenIDOut,
-    FlushCacheReq,
-    TokenizedGenerateReqInput,
-    DeactivateReq,
     ActivateReq,
     AlterModelOut,
+    BatchTokenIDOut,
+    DeactivateReq,
+    FlushCacheReq,
+    TokenizedGenerateReqInput,
 )
 from sglang.srt.managers.policy_scheduler import PolicyScheduler
 from sglang.srt.managers.schedule_batch import (
@@ -121,7 +121,7 @@ class ModelTpServer:
                 trust_remote_code=server_args.trust_remote_code,
             )
 
-         # Init running status
+        # Init running status
         self.waiting_queue: List[Req] = []
         self.running_batch: Batch = None
         self.out_pyobjs = []
@@ -668,7 +668,7 @@ class ModelTpServer:
                 # inflight request would get a new req idx
                 self.req_to_token_pool.free(int(req_pool_indices_cpu[i]))
 
-    def  forward_decode_batch(self, batch: Batch):
+    def forward_decode_batch(self, batch: Batch):
         # Check if decode out of memory
         if not batch.check_decode_mem():
             old_ratio = self.new_token_ratio

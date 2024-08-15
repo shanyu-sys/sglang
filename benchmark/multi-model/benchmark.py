@@ -1,23 +1,21 @@
-
 import argparse
 import asyncio
 import json
 import os
 import random
 import time
+from trace import Request, TraceConfig, generate_synthetic_reqs
 from typing import AsyncGenerator, List, Tuple
 
 import aiohttp
 import numpy as np
+import tqdm
 from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
 
-from trace import TraceConfig, generate_synthetic_reqs, Request
-import tqdm
-
-
 # (prompt len, output len, latency)
 REQUEST_LATENCY: List[Tuple[int, int, float, float]] = []
+
 
 async def send_generate_request(
     backend: str,
@@ -33,7 +31,7 @@ async def send_generate_request(
         sampling_params = {
             "ignore_eos": True,
             "max_new_tokens": int(req.output_len),
-            }
+        }
         pload = {
             "text": req.prompt,
             "sampling_params": sampling_params,
@@ -47,9 +45,7 @@ async def send_generate_request(
     timeout = aiohttp.ClientTimeout(total=3 * 3600)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         while True:
-            async with session.post(
-                api_url, headers=headers, json=pload
-            ) as response:
+            async with session.post(api_url, headers=headers, json=pload) as response:
                 chunks = []
                 async for chunk, _ in response.content.iter_chunks():
                     if first_token_latency is None:
@@ -67,17 +63,24 @@ async def send_generate_request(
 
     request_end_time = time.perf_counter()
     request_latency = request_end_time - request_start_time
-    print(f"req_id {req.req_id} prompt_len {req.prompt_len} output_len {req.output_len} "
-        f"request_latency {request_latency:.2f} s, first_token_latency {first_token_latency:.2f} s")
-    output_metrics = (req.prompt_len, req.output_len, request_latency, first_token_latency)
+    print(
+        f"req_id {req.req_id} prompt_len {req.prompt_len} output_len {req.output_len} "
+        f"request_latency {request_latency:.2f} s, first_token_latency {first_token_latency:.2f} s"
+    )
+    output_metrics = (
+        req.prompt_len,
+        req.output_len,
+        request_latency,
+        first_token_latency,
+    )
     REQUEST_LATENCY.append(output_metrics)
 
 
 async def benchmark(
-        backend: str,
-        input_requests: List[Request],
-        server: str,
-        debug: bool = False,
+    backend: str,
+    input_requests: List[Request],
+    server: str,
+    debug: bool = False,
 ) -> None:
     start = time.perf_counter()
     tasks: List[asyncio.Task] = []
@@ -85,7 +88,9 @@ async def benchmark(
         sleep_time = start + req.arrival_time - time.time()
         await asyncio.sleep(sleep_time)
         if debug:
-            print(f"Req {req.req_id} arrives at {req.arrival_time:.2f} and wait {sleep_time:.2f} ")
+            print(
+                f"Req {req.req_id} arrives at {req.arrival_time:.2f} and wait {sleep_time:.2f} "
+            )
         # send the generate request to its corresponding server
         # TODO: what if the model is not in the model_dir_to_server?
 
@@ -100,33 +105,30 @@ def compute_stats(benchmark_latency: float):
     per_req_latency = [i for i in REQUEST_LATENCY if i[3] is not None]
 
     # Compute the latency statistics.
-    avg_request_latency = np.mean(
-        [latency for _, _, latency, _ in per_req_latency]
-    )
+    avg_request_latency = np.mean([latency for _, _, latency, _ in per_req_latency])
     # avg_first_token_latency = np.mean(
     #     [first_token_latency for _, _, _, first_token_latency in per_req_latency]
     # )
     avg_per_token_latency = np.mean(
-        [latency / (prompt_len + output_len) for prompt_len, output_len, latency, _ in per_req_latency]
+        [
+            latency / (prompt_len + output_len)
+            for prompt_len, output_len, latency, _ in per_req_latency
+        ]
     )
     avg_per_output_token_latency = np.mean(
         [latency / output_len for _, output_len, latency, _ in per_req_latency]
     )
 
-
     # compute the throughput statistics
     request_throughput = len(per_req_latency) / benchmark_latency
-    output_token_throughput = np.sum(
-        [output_len for _, output_len, _, _ in per_req_latency]
-    ) / benchmark_latency
+    output_token_throughput = (
+        np.sum([output_len for _, output_len, _, _ in per_req_latency])
+        / benchmark_latency
+    )
 
     # compute request stats
-    avg_prompt_len = np.mean(
-        [prompt_len for prompt_len, _, _, _ in per_req_latency]
-    )
-    avg_output_len = np.mean(
-        [output_len for _, output_len, _, _ in per_req_latency]
-    )
+    avg_prompt_len = np.mean([prompt_len for prompt_len, _, _, _ in per_req_latency])
+    avg_output_len = np.mean([output_len for _, output_len, _, _ in per_req_latency])
 
     print(f"Total time: {benchmark_latency:.2f} s")
     print(f"Number of aborted requests: {num_abort}")
@@ -139,7 +141,7 @@ def compute_stats(benchmark_latency: float):
     # print(f"Average prompt length: {avg_prompt_len:.2f}")
     # print(f"Average output length: {avg_output_len:.2f}")
 
-    result  = {
+    result = {
         "total_time": benchmark_latency,
         "num_abort": num_abort,
         "avg_request_latency": avg_request_latency,
@@ -148,8 +150,8 @@ def compute_stats(benchmark_latency: float):
         "avg_per_output_token_latency": avg_per_output_token_latency,
         "request_throughput": request_throughput,
         "output_token_throughput": output_token_throughput,
-    #     "avg_prompt_len": avg_prompt_len,
-    #     "avg_output_len": avg_output_len,
+        #     "avg_prompt_len": avg_prompt_len,
+        #     "avg_output_len": avg_output_len,
     }
     return result
 
@@ -191,9 +193,12 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--output", type=str, default="output.jsonl")
     parser.add_argument("--append", action="store_true")
-    parser.add_argument("--model-paths", type=str, nargs="+", 
-                        default=["meta-llama/Llama-2-7b-chat-hf", "mistralai/Mistral-7B-Instruct-v0.2"])
-
+    parser.add_argument(
+        "--model-paths",
+        type=str,
+        nargs="+",
+        default=["meta-llama/Llama-2-7b-chat-hf", "mistralai/Mistral-7B-Instruct-v0.2"],
+    )
 
     args = parser.parse_args()
 
@@ -209,7 +214,6 @@ if __name__ == "__main__":
         alpha=0.1,  # The mean rate for poisson arrival process
         cv=1,  # The coefficient of variation for gamma distributed intervals
     )
-
 
     metrics = run(trace_config, args.backend, server, args.debug)
     with open(args.output, "a" if args.append else "w") as f:

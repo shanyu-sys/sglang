@@ -15,10 +15,12 @@ limitations under the License.
 
 """ModelRunner runs the forward passes of the models."""
 
+import gc
 import importlib
 import importlib.resources
 import logging
 import pkgutil
+import time
 import warnings
 from functools import lru_cache
 from typing import Optional, Type
@@ -62,8 +64,6 @@ from sglang.srt.utils import (
     monkey_patch_vllm_p2p_access_check,
     monkey_patch_vllm_qvk_linear_loader,
 )
-import time
-import gc
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,6 @@ class ModelRunner:
             self._model_on_cpu = False
         else:
             self.load_model()
-
 
         self.init_memory_pool(
             total_gpu_memory,

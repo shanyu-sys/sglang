@@ -38,14 +38,14 @@ from sglang.srt.hf_transformers_utils import (
 )
 from sglang.srt.managers.io_struct import (
     AbortReq,
+    ActivateReq,
+    AlterModelOut,
     BatchStrOut,
     BatchTokenIDOut,
+    DeactivateReq,
     FlushCacheReq,
     GenerateReqInput,
     TokenizedGenerateReqInput,
-    DeactivateReq,
-    ActivateReq,
-    AlterModelOut,
 )
 from sglang.srt.mm_utils import expand2square, process_anyres_image
 from sglang.srt.sampling_params import SamplingParams
@@ -451,7 +451,7 @@ class TokenizerManager:
         del self.rid_to_state[rid]
         req = AbortReq(rid)
         self.send_to_router.send_pyobj(req)
-    
+
     async def deactivate_model(self, to_cpu: bool = False):
         deactivate_req = DeactivateReq(self.served_model_name, to_cpu)
         deactivate_req.post_init()
@@ -466,7 +466,9 @@ class TokenizerManager:
 
         if self.to_create_loop:
             # assert that the activate response will not be batched with other generation responses
-            recv_obj = await asyncio.wait_for(self.recv_from_detokenizer.recv_pyobj(), timeout=4)
+            recv_obj = await asyncio.wait_for(
+                self.recv_from_detokenizer.recv_pyobj(), timeout=4
+            )
             return
         else:
             event = asyncio.Event()
@@ -478,7 +480,7 @@ class TokenizerManager:
                     break
                 except asyncio.TimeoutError:
                     continue
-            
+
             assert state.finished
             out = state.out_list[-1]
             del self.alter_rid_to_state[activate_req.rid]
@@ -502,13 +504,13 @@ class TokenizerManager:
     #             break
     #         except asyncio.TimeoutError:
     #             continue
-        
+
     #     assert state.finished
     #     out = state.out_list[-1]
     #     del self.alter_rid_to_state[activate_req.rid]
     #     print("activate model response received by tokenizer: ", out)
     #     return out
-    
+
     async def _send_req_and_wait_for_response(self, obj):
         rid = obj.rid
         self.send_to_router.send_pyobj(obj)

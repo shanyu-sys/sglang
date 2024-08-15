@@ -43,6 +43,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from sglang.lang.backend.runtime_endpoint import RuntimeEndpoint
 from sglang.srt.constrained import disable_cache
+from sglang.srt.controller import Controller
 from sglang.srt.hf_transformers_utils import get_tokenizer
 from sglang.srt.managers.controller_multi import (
     start_controller_process as start_controller_process_multi,
@@ -77,8 +78,6 @@ from sglang.srt.utils import (
     set_ulimit,
 )
 from sglang.utils import get_exception_traceback
-from sglang.srt.controller import Controller
-
 
 logger = logging.getLogger(__name__)
 
@@ -296,8 +295,9 @@ def launch_server(
 
     # Launch the controller
     global controller
-    controller = Controller(tokenizer_managers=tokenizer_managers,
-                            server_args=server_args)
+    controller = Controller(
+        tokenizer_managers=tokenizer_managers, server_args=server_args
+    )
 
     # Add api key authorization
     if server_args.api_key:

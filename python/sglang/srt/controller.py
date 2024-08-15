@@ -1,26 +1,29 @@
+import asyncio
 import enum
 import time
-import asyncio
-from sglang.srt.managers.io_struct import (
-    GenerateReqInput,
-    AbortReq,
-    BatchTokenIDOut,
-    FlushCacheReq,
-    TokenizedGenerateReqInput,
-    DeactivateReq,
-    ActivateReq,
-)
-from sglang.srt.server_args import ServerArgs
-from typing import Dict
-from sglang.srt.managers.tokenizer_manager import TokenizerManager
-from fastapi.responses import JSONResponse, Response, StreamingResponse
 from http import HTTPStatus
+from typing import Dict
+
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+
+from sglang.srt.managers.io_struct import (
+    AbortReq,
+    ActivateReq,
+    BatchTokenIDOut,
+    DeactivateReq,
+    FlushCacheReq,
+    GenerateReqInput,
+    TokenizedGenerateReqInput,
+)
+from sglang.srt.managers.tokenizer_manager import TokenizerManager
+from sglang.srt.server_args import ServerArgs
 
 
 class ModelStatus(enum.Enum):
     """Model status."""
+
     ACTIVE = enum.auto()  # ON_GPU
-    IN_TRANSIT = enum.auto()    # ON_CPU
+    IN_TRANSIT = enum.auto()  # ON_CPU
     OFF = enum.auto()  # OFF
 
 
@@ -37,8 +40,9 @@ class RequestWrapper:
 
 
 class Controller:
-    def __init__(self, tokenizer_managers: Dict[str, TokenizerManager],
-                 server_args: ServerArgs):
+    def __init__(
+        self, tokenizer_managers: Dict[str, TokenizerManager], server_args: ServerArgs
+    ):
         self.model_queues: Dict[str, asyncio.Queue] = {}
         self.model_status: Dict[str, ModelStatus] = {}
         self.model_unfinished_requests: Dict[str, set[str]] = {}
@@ -91,7 +95,7 @@ class Controller:
             return ret
         except Exception as e:
             return JSONResponse(
-                  {"error": {"message": str(e)}}, status_code=HTTPStatus.BAD_REQUEST
+                {"error": {"message": str(e)}}, status_code=HTTPStatus.BAD_REQUEST
             )
 
     def _create_loop(self):
@@ -144,10 +148,12 @@ class Controller:
         while not self.model_queues[model].empty():
             request_wrapper = await self.model_queues[model].get()
             assert request_wrapper.obj.stream is False, "Stream is not supported."
-            future = tokenizer_manager.generate_request(request_wrapper.obj, request_wrapper.request).__anext__()
+            future = tokenizer_manager.generate_request(
+                request_wrapper.obj, request_wrapper.request
+            ).__anext__()
             request_wrapper.send_to_tokenizer_manager.set_result(future)
             self.model_unfinished_requests[model].add(request_wrapper.req_id)
-    
+
     def should_switch_off_model(self, model, queue):
         # If no requests in its queue, and no unfinshed requests
         # if queue.qsize() == 0 and len(self.model_unfinished_requests[model]) == 0:
@@ -171,8 +177,12 @@ class Controller:
         return False
 
     def _get_active_models(self):
-        return [model for model, status in self.model_status.items() if status == ModelStatus.ACTIVE]
-    
+        return [
+            model
+            for model, status in self.model_status.items()
+            if status == ModelStatus.ACTIVE
+        ]
+
     def get_victim_model(self):
         active_models = self._get_active_models()
         # TODO: implement a policy to choose the victim model
@@ -203,7 +213,7 @@ class Controller:
 
     def should_shrink_memory_pool(self, model, queue):
         return False
-    
+
     async def shrink_memory_pool(self, model):
         pass
 
@@ -211,6 +221,7 @@ class Controller:
 def get_available_memory(memory: int):
     # TODO: implement this
     return 100
+
 
 def get_memory_needed(model: str):
     return 10

@@ -1,5 +1,6 @@
 import dataclasses
 from typing import Optional
+
 import numpy as np
 
 
@@ -12,10 +13,11 @@ class Request:
     arrival_time: float
     model: str
 
+
 @dataclasses.dataclass
 class TraceConfig:
     req_rate: float
-    duration: float   
+    duration: float
     input_range: tuple[int, int]
     output_range: tuple[int, int]
     model_paths: list[str]
@@ -48,15 +50,15 @@ def generate_synthetic_reqs(
 
     # generate model path and tokenizer path
     probs = np.random.power(config.alpha, num_reqs)
-    num_models = len(config.model_paths) 
+    num_models = len(config.model_paths)
     model_indices = (probs * num_models).astype(int)
     tokenizer_indices = model_indices
 
     # generate timestamps, with gamma distributed intervals
     # cv is the coefficient of variation, which is the ratio of the standard deviation to
     # the mean of the gamma distribution
-    shape = 1 / (config.cv ** 2)
-    scale = config.cv ** 2 / config.req_rate
+    shape = 1 / (config.cv**2)
+    scale = config.cv**2 / config.req_rate
     intervals = np.random.gamma(shape, scale, num_reqs)
     timestamps = np.cumsum(intervals)
 
@@ -84,14 +86,14 @@ def generate_synthetic_reqs(
 if __name__ == "__main__":
     config = TraceConfig(
         req_rate=2,  # 2 requests per second
-        duration=60, # 5 minutes
-        input_range=[8, 512], # input length between 8 and 512
-        output_range=[8, 512], # output length between 8 and 512
-        model_paths=["model1", "model2"], # list of model paths
-        tokenizer_paths=["tokenizer1", "tokenizer2"], # list of tokenizer paths
+        duration=60,  # 5 minutes
+        input_range=[8, 512],  # input length between 8 and 512
+        output_range=[8, 512],  # output length between 8 and 512
+        model_paths=["model1", "model2"],  # list of model paths
+        tokenizer_paths=["tokenizer1", "tokenizer2"],  # list of tokenizer paths
         seed=42,
-        alpha=0.1, # The mean rate for poisson arrival process
-        cv=1, # The coefficient of variation for gamma distributed intervals
+        alpha=0.1,  # The mean rate for poisson arrival process
+        cv=1,  # The coefficient of variation for gamma distributed intervals
     )
     requests = generate_synthetic_reqs(config)
     num_swaps = 0
