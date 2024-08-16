@@ -386,7 +386,7 @@ def _wait_and_warmup(server_args, pipe_finish_writer):
     for _ in range(2):
         try:
             for _ in range(server_args.dp_size):
-                for i in range(len(server_args.model_paths)):
+                for i in range(len(server_args.init_scheduled_models)):
                     res = requests.post(
                         url + "/generate",
                         json={
@@ -395,7 +395,7 @@ def _wait_and_warmup(server_args, pipe_finish_writer):
                                 "temperature": 0,
                                 "max_new_tokens": 8,
                             },
-                            "model": server_args.model_paths[i],
+                            "model": server_args.init_scheduled_models[i],
                         },
                         headers=headers,
                         timeout=600,

@@ -12,6 +12,7 @@ import numpy as np
 import tqdm
 from tqdm.asyncio import tqdm_asyncio
 from transformers import AutoTokenizer
+from exp_suite import get_all_suites
 
 # (prompt len, output len, latency)
 REQUEST_LATENCY: List[Tuple[int, int, float, float]] = []
@@ -156,7 +157,7 @@ def compute_stats(benchmark_latency: float):
     return result
 
 
-def run(trace_config, backend, server, debug):
+def run(trace_config, backend, server, debug, output):
     # get requests
     requests = generate_synthetic_reqs(trace_config)
 
@@ -173,6 +174,12 @@ def run(trace_config, backend, server, debug):
 
     # compute stats
     metrics = compute_stats(benchmark_latency)
+
+    res = {"config": trace_config.__dict__, "results": metrics}
+
+    with open(output, "a") as f:
+        f.write(json.dumps(res) + "\n")
+
     return metrics
 
 
@@ -204,19 +211,22 @@ if __name__ == "__main__":
 
     server = f"http://{args.host}:{args.port}"
 
-    trace_config = TraceConfig(
-        req_rate=2,  # 2 requests per second
-        duration=60 * 5,  # 5 minutes
-        input_range=[8, 512],  # input length between 8 and 512
-        output_range=[8, 512],  # output length between 8 and 512
-        model_paths=args.model_paths,  # list of model paths
-        seed=42,
-        alpha=0.1,  # The mean rate for poisson arrival process
-        cv=1,  # The coefficient of variation for gamma distributed intervals
-    )
+    all_trace_configs = get_all_suites(args.model_paths, seed=42)
+    print(f"Total number of experiments: {len(all_trace_configs)}")
+    for exp, trace_config in all_trace_configs:
+        print(f"Running experiment {exp} with config {trace_config.__dict__}")
+        run(trace_config, args.backend, server, args.debug, output=args.output)
+ 
 
-    metrics = run(trace_config, args.backend, server, args.debug)
-    with open(args.output, "a" if args.append else "w") as f:
-        # write the trace config
-        f.write(json.dumps(trace_config.__dict__) + "\n")
-        f.write(json.dumps(metrics) + "\n")
+    # trace_config = TraceConfig(
+    #     req_rate=2,  # 2 requests per second
+    #     duration=60 * 5,  # 5 minutes
+    #     input_range=[8, 512],  # input length between 8 and 512
+    #     output_range=[8, 512],  # output length between 8 and 512
+    #     model_paths=args.model_paths,  # list of model paths
+    #     seed=42,
+    #     alpha=1,  # The mean rate for poisson arrival process
+    #     cv=1,  # The coefficient of variation for gamma distributed intervals
+    # )
+
+    # metrics = run(trace_config, args.backend, server, args.debug, output=args.output)

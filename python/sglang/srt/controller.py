@@ -124,7 +124,6 @@ class Controller:
             if self.model_status[model] == ModelStatus.OFF:
                 # check if the model should be switched on
                 if self.should_switch_on_model(model, queue):
-                    print(f"Switching on model {model}")
                     await self.switch_on_model(model)
 
             elif self.model_status[model] == ModelStatus.ACTIVE:
@@ -165,6 +164,10 @@ class Controller:
         print(f"Switching off model {model}")
         tokenizer_manager = self.tokenizer_managers[model]
         self.model_status[model] = ModelStatus.IN_TRANSIT
+        # wait for all requests finish 
+        while len(self.model_unfinished_requests[model]) > 0:
+            await asyncio.sleep(0.1)
+
         out = await tokenizer_manager.deactivate_model(to_cpu=False)
         self.model_status[model] = ModelStatus.OFF
         print(f"model {model} is switched off.")
@@ -172,9 +175,10 @@ class Controller:
 
     def should_switch_on_model(self, model, queue):
         # TODO: check arrival time of the first req in queue.
-        # if queue.qsize() >= 10:
-        #     return True
-        return False
+        if queue.qsize() >= 10:
+            print(f"Queue size of model {model} is {queue.qsize()}, switching on.")
+            return True
+        # return False
 
     def _get_active_models(self):
         return [
@@ -220,7 +224,7 @@ class Controller:
 
 def get_available_memory(memory: int):
     # TODO: implement this
-    return 100
+    return memory
 
 
 def get_memory_needed(model: str):

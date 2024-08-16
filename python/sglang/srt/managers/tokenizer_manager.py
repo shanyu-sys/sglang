@@ -455,7 +455,9 @@ class TokenizerManager:
     async def deactivate_model(self, to_cpu: bool = False):
         deactivate_req = DeactivateReq(self.served_model_name, to_cpu)
         deactivate_req.post_init()
+        print(f"deactivate model request sent by tokenizer: {deactivate_req}")
         ret = await self._send_req_and_wait_for_response(deactivate_req)
+        print(f"deactivate model response received by tokenizer: {ret}")
         return ret
 
     async def activate_model(self):
@@ -518,7 +520,7 @@ class TokenizerManager:
 
         event = asyncio.Event()
         state = ReqState([], False, event)
-        self.rid_to_state[rid] = state
+        self.alter_rid_to_state[rid] = state
 
         while True:
             # print("before wait for response of _send_req_and_wait_for_response")
@@ -531,7 +533,7 @@ class TokenizerManager:
 
         assert state.finished
         out = state.out_list[-1]
-        del self.rid_to_state[rid]
+        del self.alter_rid_to_state[rid]
         return out
 
     def create_abort_task(self, obj: GenerateReqInput):
@@ -592,13 +594,23 @@ class TokenizerManager:
             state.event.set()
 
     def _handle_alter_model_response(self, recv_obj: AlterModelOut):
-        for i, rid in enumerate(recv_obj.rids):
-            print(f"alter_model response with rid received by tokenizer: {rid}")
+        alter_type = recv_obj.alter_type
+        rids = recv_obj.rids
+
+        print(f"{alter_type} response with rid {rids} received by tokenizer")
+
+        for i, rid in enumerate(rids):
             state = self.alter_rid_to_state.get(rid, None)
+            print(f"state: {state}")
+
             if state is None:
                 continue
 
-            state.out_list.append(recv_obj.success)
+            out_dict = {
+                "success": recv_obj.success,
+                "alter_type": alter_type,
+            }
+            state.out_list.append(out_dict)
             state.finished = True
             state.event.set()
 

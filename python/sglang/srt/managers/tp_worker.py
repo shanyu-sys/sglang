@@ -153,6 +153,16 @@ class ModelTpServer:
         self.new_token_ratio_decay = global_config.new_token_ratio_decay
         self.new_token_ratio_recovery = global_config.new_token_ratio_recovery
 
+        self.max_prefill_tokens = (
+            16384
+            if self.server_args.max_prefill_tokens is None
+            else self.server_args.max_prefill_tokens
+        )
+        self.int_token_logit_bias = torch.tensor(
+            get_int_token_logit_bias(self.tokenizer, self.model_config.vocab_size)
+        )
+        set_random_seed(self.server_args.random_seed)
+
         self._activated = False
         # self._activate()
 
@@ -160,11 +170,7 @@ class ModelTpServer:
         assert not self._activated, "ModelTpServer has already been activated"
         self._activated = True
         self.max_total_num_tokens = self.model_runner.max_total_num_tokens
-        self.max_prefill_tokens = (
-            16384
-            if self.server_args.max_prefill_tokens is None
-            else self.server_args.max_prefill_tokens
-        )
+
         self.max_running_requests = min(
             (
                 self.max_total_num_tokens // 2
@@ -173,14 +179,11 @@ class ModelTpServer:
             ),
             self.model_runner.req_to_token_pool.size - 1,
         )
-        self.int_token_logit_bias = torch.tensor(
-            get_int_token_logit_bias(self.tokenizer, self.model_config.vocab_size)
-        )
+
         self.max_req_input_len = min(
             self.model_config.context_len - 1,
             self.max_total_num_tokens - 1,
         )
-        set_random_seed(self.server_args.random_seed)
 
         # Print info
         logger.info(
@@ -231,7 +234,7 @@ class ModelTpServer:
                 elif isinstance(recv_req, ActivateReq):
                     self.activate_model_runner(recv_req)
                 elif isinstance(recv_req, DeactivateReq):
-                    self.forward_step()
+                    # self.forward_step()
                     self.deactivate_model_runner(recv_req)
                     break
                 else:
@@ -256,6 +259,8 @@ class ModelTpServer:
         new_batch = self.get_new_prefill_batch()
 
         if new_batch is not None:
+            if not self.model_runner._activated:
+                raise ValueError(f"{self.model_name} model_runner is not activated, but new_batch for prefill is not None")
             # Run a new prefill batch
             self.forward_prefill_batch(new_batch)
             self.cache_filled_batch(new_batch)
@@ -269,6 +274,8 @@ class ModelTpServer:
         else:
             # Run a decode batch
             if self.running_batch is not None:
+                if not self.model_runner._activated:
+                    raise ValueError(f"{self.model_name} model_runner is not activated, but running_batch is not None")
                 # Run a few decode batches continuously for reducing overhead
                 for _ in range(global_config.num_continue_decode_steps):
                     self.num_generated_tokens += len(self.running_batch.reqs)
@@ -898,6 +905,7 @@ class ModelTpServer:
             alter_type="deactivate",
         )
         self.out_pyobjs.append(out)
+        self._activated = False
 
 
 def run_tp_server(
