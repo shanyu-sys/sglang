@@ -175,8 +175,12 @@ def launch_server(
     global tokenizer_managers
 
     logging.basicConfig(
+        filename=server_args.log_file,
+        filemode="a",
+        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+        datefmt='%H:%M:%S',
         level=getattr(logging, server_args.log_level.upper()),
-        format="%(message)s",
+        # format="%(message)s",
     )
 
     server_args.check_server_args()

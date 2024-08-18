@@ -83,7 +83,7 @@ async def benchmark(
     server: str,
     debug: bool = False,
 ) -> None:
-    start = time.perf_counter()
+    start = time.time()
     tasks: List[asyncio.Task] = []
     for req in tqdm.tqdm(input_requests):
         sleep_time = start + req.arrival_time - time.time()
@@ -211,22 +211,24 @@ if __name__ == "__main__":
 
     server = f"http://{args.host}:{args.port}"
 
-    all_trace_configs = get_all_suites(args.model_paths, seed=42)
-    print(f"Total number of experiments: {len(all_trace_configs)}")
-    for exp, trace_config in all_trace_configs:
-        print(f"Running experiment {exp} with config {trace_config.__dict__}")
-        run(trace_config, args.backend, server, args.debug, output=args.output)
+    # all_trace_configs = get_all_suites(args.model_paths, seed=42)
+    # print(f"Total number of experiments: {len(all_trace_configs)}")
+    # for exp, trace_config in all_trace_configs:
+    #     if exp == "changing_req_rate":
+    #         continue
+    #     print(f"Running experiment {exp} with config {trace_config.__dict__}")
+    #     run(trace_config, args.backend, server, args.debug, output=args.output)
  
 
-    # trace_config = TraceConfig(
-    #     req_rate=2,  # 2 requests per second
-    #     duration=60 * 5,  # 5 minutes
-    #     input_range=[8, 512],  # input length between 8 and 512
-    #     output_range=[8, 512],  # output length between 8 and 512
-    #     model_paths=args.model_paths,  # list of model paths
-    #     seed=42,
-    #     alpha=1,  # The mean rate for poisson arrival process
-    #     cv=1,  # The coefficient of variation for gamma distributed intervals
-    # )
+    trace_config = TraceConfig(
+        req_rate=2,  # 2 requests per second
+        duration=60 * 5,  # 5 minutes
+        input_range=[8, 512],  # input length between 8 and 512
+        output_range=[8, 512],  # output length between 8 and 512
+        model_paths=args.model_paths,  # list of model paths
+        seed=42,
+        alpha=1,  # The mean rate for poisson arrival process
+        cv=1,  # The coefficient of variation for gamma distributed intervals
+    )
 
-    # metrics = run(trace_config, args.backend, server, args.debug, output=args.output)
+    metrics = run(trace_config, args.backend, server, args.debug, output=args.output)

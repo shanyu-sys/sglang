@@ -64,6 +64,7 @@ from sglang.srt.utils import (
     monkey_patch_vllm_p2p_access_check,
     monkey_patch_vllm_qvk_linear_loader,
 )
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ class ModelRunner:
     def _swap_out_model(self, to_cpu=False):
         begin_swap = time.perf_counter()
         logger.info(
-            f"[model_name={self.model_path}][gpu_id={self.gpu_id}] swap out model (to cpu {to_cpu}) begin."
+            f"[time={time.time():.2f}][model_name={self.model_path}][gpu_id={self.gpu_id}] swap out model (to cpu {to_cpu}) begin."
             f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
         )
         if to_cpu and self.model is not None:
@@ -202,7 +203,7 @@ class ModelRunner:
         self._activated = False
         end_swap = time.perf_counter()
         logger.info(
-            f"[gpu_id={self.gpu_id}] Swap out model end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB, "
+            f"[time={time.time()}][model_name={self.model_path}][gpu_id={self.gpu_id}] Swap out model end. avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB, "
             f"swap out model time: {end_swap - begin_swap:.2f} s"
         )
 

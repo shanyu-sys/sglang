@@ -16,7 +16,7 @@ BenchmarkConfig = namedtuple(
 
 all_suites = {
     "changing_req_rate": BenchmarkConfig(
-        req_rate=[1, 2, 4, 6, 8, 16, 24, 32],  # 2 requests per second
+        req_rate=[1, 2, 4, 6, 8, 16],  # 2 requests per second
         duration=60 * 5,  # 5 minutes
         input_range=[8, 512],  # input length between 8 and 512
         output_range=[8, 512],  # output length between 8 and 512
@@ -36,7 +36,7 @@ all_suites = {
         duration=60 * 5,  # 5 minutes
         input_range=[8, 512],  # input length between 8 and 512
         output_range=[8, 512],  # output length between 8 and 512
-        alpha=[0.1, 0.3, 0.6, 1, 2, 4, 6, 8],  # The mean rate for poisson arrival process
+        alpha=[0.1, 0.3, 0.6, 1, 2, 4, 8],  # The mean rate for poisson arrival process
         cv=[1],  # The coefficient of variation for gamma distributed intervals
     ),
 }

@@ -60,6 +60,7 @@ class ServerArgs:
     log_level_http: Optional[str] = None
     log_requests: bool = False
     show_time_cost: bool = False
+    log_file: Optional[str] = None
 
     # Other
     api_key: Optional[str] = None
@@ -322,6 +323,10 @@ class ServerArgs:
             "--show-time-cost",
             action="store_true",
             help="Show time cost of custom marks.",
+        )
+        parser.add_argument(
+            "--log-file",
+            type=str,
         )
         parser.add_argument(
             "--api-key",

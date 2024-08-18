@@ -187,6 +187,7 @@ class ModelTpServer:
 
         # Print info
         logger.info(
+            f"[time={time.time():.2f}] "
             f"[{self.model_name}]"
             f"[gpu={self.gpu_id}] "
             f"max_total_num_tokens={self.max_total_num_tokens}, "
@@ -303,6 +304,7 @@ class ModelTpServer:
         self.num_generated_tokens = 0
         self.last_stats_tic = time.time()
         logger.info(
+            f"[time={time.time():.2f}] "
             f"[{self.model_name}]"
             f"[gpu={self.gpu_id}] Decode batch. "
             f"#running-req: {len(self.running_batch.reqs)}, "
@@ -549,6 +551,7 @@ class ModelTpServer:
                 self.tree_cache_metrics["hit"] / self.tree_cache_metrics["total"]
             )
             logger.info(
+                f"[time={time.time():.2f}] "
                 f"[{self.model_name}]"
                 f"[gpu={self.gpu_id}] Prefill batch. "
                 f"#new-seq: {len(can_run_list)}, "

@@ -175,7 +175,7 @@ class Controller:
 
     def should_switch_on_model(self, model, queue):
         # TODO: check arrival time of the first req in queue.
-        if queue.qsize() >= 10:
+        if queue.qsize() >= 32:
             print(f"Queue size of model {model} is {queue.qsize()}, switching on.")
             return True
         # return False
