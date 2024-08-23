@@ -26,6 +26,7 @@ class ServerArgs:
     # Model and tokenizer
     model_paths: List[str]
     init_scheduled_models: Optional[List[str]] = None
+    inactivate_threshold: Optional[float] = None
     tokenizer_paths: Optional[List[str]] = None
     tokenizer_mode: str = "auto"
     load_format: str = "auto"
@@ -139,6 +140,11 @@ class ServerArgs:
             nargs="+",
             type=str,
             help="The models to be initialized and scheduled at the beginning.",
+        )
+        parser.add_argument(
+            "--inactivate-threshold",
+            type=float,
+            help="The threshold of the model inactivation policy. If the number of waiting requests is less than this threshold, the model will be inactivated.",
         )
         parser.add_argument(
             "--tokenizer-paths",

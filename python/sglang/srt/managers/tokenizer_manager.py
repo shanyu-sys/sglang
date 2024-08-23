@@ -455,9 +455,7 @@ class TokenizerManager:
     async def deactivate_model(self, to_cpu: bool = False):
         deactivate_req = DeactivateReq(self.served_model_name, to_cpu)
         deactivate_req.post_init()
-        print(f"deactivate model request sent by tokenizer: {deactivate_req}")
         ret = await self._send_req_and_wait_for_response(deactivate_req)
-        print(f"deactivate model response received by tokenizer: {ret}")
         return ret
 
     async def activate_model(self):
@@ -597,11 +595,11 @@ class TokenizerManager:
         alter_type = recv_obj.alter_type
         rids = recv_obj.rids
 
-        print(f"{alter_type} response with rid {rids} received by tokenizer")
+        # print(f"{alter_type} response with rid {rids} received by tokenizer")
 
         for i, rid in enumerate(rids):
             state = self.alter_rid_to_state.get(rid, None)
-            print(f"state: {state}")
+            # print(f"state: {state}")
 
             if state is None:
                 continue
