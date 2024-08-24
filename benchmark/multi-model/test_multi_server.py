@@ -220,7 +220,7 @@ class TestMultiServer(unittest.TestCase):
             self.run_single_model_test(req_rate=req_rate, cv=1, alpha=1)
 
     def test_all(self):
-        req_rates = [0.6, 1, 2, 4, 8]
+        req_rates = [1, 2, 4, 8, 16]
         cv = 1
         alphas = [0.1, 0.3, 0.6, 1]
         for req_rate in req_rates:
@@ -230,7 +230,7 @@ class TestMultiServer(unittest.TestCase):
                 self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha)
                 self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha)
 
-        req_rates = [0.6, 1, 2, 4, 8]
+        req_rates = [1, 2, 4, 8, 16]
         alpha = 1
         cvs = [0.1, 2, 4]
         for req_rate in req_rates:
