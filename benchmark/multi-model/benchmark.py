@@ -177,6 +177,8 @@ async def benchmark(
 
     print("\n{s:{c}^{n}}".format(s=" Serving Benchmark Result ", n=50, c="="))
     print("{:<40} {:<10}".format("Traffic request rate:", request_rate))
+    print("{:<40} {:<10}".format("Alpha:", alpha))
+    print("{:<40} {:<10}".format("CV:", cv))
     print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
     print("{:<40} {:<10.2f}".format("Benchmark duration (s):", benchmark_duration))
     print("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
