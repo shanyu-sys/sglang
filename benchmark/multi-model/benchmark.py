@@ -383,6 +383,8 @@ def run_benchmark(args_: argparse.Namespace, trace_config):
         debug=args.debug,
         disable_tqdm=args.disable_tqdm,
     ))
+    if not os.path.exists(args.results_path):
+        os.makedirs(args.results_path)
 
     output_file_name = get_output_file_name(
         trace_config, args.mode

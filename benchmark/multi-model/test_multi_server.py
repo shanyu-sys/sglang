@@ -74,8 +74,10 @@ def popen_launch_server(
         time.sleep(10)
     raise TimeoutError("Server failed to start within the timeout period.")
 
-
 def get_server_log_file_name(trace_config, mode):
+    if not os.path.exists("server-logs"):
+        os.makedirs("server-logs")
+
     now = datetime.now().strftime("%m%d")
 
     filename = f"{now}_{mode}_duration-{trace_config.duration}_req_rate-{trace_config.req_rate}_alpha-{trace_config.alpha}_cv-{trace_config.cv}_input-{trace_config.input_range[0]}-{trace_config.input_range[1]}_output-{trace_config.output_range[0]}-{trace_config.output_range[1]}.log"
@@ -94,8 +96,8 @@ class TestMultiServer(unittest.TestCase):
                  mode: str = None,
                  other_args: tuple = ()
                  ):
+        
         # Launch the server
-
         base_url = DEFAULT_URL_FOR_E2E_TEST
 
         server_log_file = get_server_log_file_name(trace_config, mode)
