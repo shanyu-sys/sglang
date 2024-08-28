@@ -166,9 +166,16 @@ class TestMultiServer(unittest.TestCase):
                 alpha=alpha,
                 cv=cv,
             )
+        # total_memory/model_weights need to be changed based on application
+        total_memory = 20.66
+        total_memory_ratio = 0.8
+        model_weights = [6.52, 7]
+        kv_cache_memory = total_memory * total_memory_ratio - sum(model_weights)
         p1 = (1/2)**alpha
         p2 = 1 - p1
-        mem_fracs = [0.8*p1, 0.8*p2 / (1-p1)]
+        model1_memory = model_weights[0] + kv_cache_memory * p1
+        model2_memory = model_weights[1] + kv_cache_memory * p2
+        mem_fracs = [model1_memory / total_memory, model2_memory / (total_memory - model1_memory)]
 
         res = self.run_test(
             models=DEFAULT_MODEL_NAMES_FOR_TEST,
