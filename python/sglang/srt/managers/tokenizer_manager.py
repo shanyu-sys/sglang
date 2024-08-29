@@ -467,7 +467,7 @@ class TokenizerManager:
         if self.to_create_loop:
             # assert that the activate response will not be batched with other generation responses
             recv_obj = await asyncio.wait_for(
-                self.recv_from_detokenizer.recv_pyobj(), timeout=10
+                self.recv_from_detokenizer.recv_pyobj(), timeout=40
             )
             return
         else:
