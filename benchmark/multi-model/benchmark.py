@@ -22,6 +22,7 @@ import resource
 
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
+SLO = 60 * 2  # 2 minutes
 
 global args
 
@@ -207,6 +208,16 @@ async def benchmark(
             "Median E2E Latency (ms):", metrics.median_e2e_latency_ms
         )
     )
+    print(
+        "{:<40} {:<10.2f}".format(
+            "P99 E2E Latency (ms):", metrics.p99_e2e_latency_ms
+        )
+    )
+    print(
+        "{:<40} {:<10.2f}".format(
+            "Average Attainment:", metrics.average_attainment
+        )
+    )
     # print("{s:{c}^{n}}".format(s="Time to First Token", n=50, c="-"))
     # print("{:<40} {:<10.2f}".format("Mean TTFT (ms):", metrics.mean_ttft_ms))
     # print("{:<40} {:<10.2f}".format("Median TTFT (ms):", metrics.median_ttft_ms))
@@ -239,6 +250,8 @@ async def benchmark(
             "request_throughput": metrics.request_throughput,
             "mean_e2e_latency_ms": metrics.mean_e2e_latency_ms,
             "median_e2e_latency_ms": metrics.median_e2e_latency_ms,
+            "p99_e2e_latency_ms": metrics.p99_e2e_latency_ms,
+            "average_attainment": metrics.average_attainment,
             # "median_ttft_ms": metrics.median_ttft_ms,
             # "median_itl_ms": metrics.median_itl_ms,
             "duration": benchmark_duration,
@@ -291,6 +304,8 @@ class BenchmarkMetrics:
     p99_itl_ms: float
     mean_e2e_latency_ms: float
     median_e2e_latency_ms: float
+    p99_e2e_latency_ms: float
+    average_attainment: float = 0.0
 
 
 def calculate_metrics(
@@ -323,6 +338,7 @@ def calculate_metrics(
             output_lens.append(0)
             retokenized_output_lens.append(0)
 
+    attainment = [1 if e2e_latency < SLO else 0 for e2e_latency in e2e_latencies]
     if completed == 0:
         warnings.warn(
             "All requests failed. This is likely due to a misconfiguration "
@@ -351,6 +367,8 @@ def calculate_metrics(
         p99_itl_ms=np.percentile(itls or 0, 99) * 1000,
         mean_e2e_latency_ms=np.mean(e2e_latencies) * 1000,
         median_e2e_latency_ms=np.median(e2e_latencies) * 1000,
+        p99_e2e_latency_ms=np.percentile(e2e_latencies, 99) * 1000,
+        average_attainment=np.mean(attainment),
     )
 
     return metrics

@@ -18,9 +18,17 @@ from sglang.srt.managers.io_struct import (
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
 from sglang.srt.server_args import ServerArgs
 import logging
+from collections import deque
+from sglang.srt.utils import get_available_gpu_memory
 
 logger = logging.getLogger(__name__)
 
+# Memory needed for each model
+MODEL_TO_MEMORY = {
+    "meta-llama/Llama-2-7b-chat-hf": 10,
+    "meta-llama/Llama-2-7b-hf": 10,
+    "mistralai/Mistral-7B-Instruct-v0.2": 10,
+}
 
 class ModelStatus(enum.Enum):
     """Model status."""
@@ -35,18 +43,28 @@ class RequestWrapper:
         self.obj = obj
         self.req_id = obj.rid
         self.model = obj.model
-        self.arrival_time = time.time()
+        self.min_schedule_time = self._get_min_schedule_time()
         self.request = request
         self.process_model_queue_tasks = {}
         self.event = asyncio.Event()
         self.send_to_tokenizer_manager = asyncio.Future()
+
+    def _get_min_schedule_time(self):
+        arrival_time = time.time()
+        SLO = 60 * 2 # 3 minutes
+        cool_down_time = 20 # wait ongoing requests to finish
+        swap_out_time = 0.8
+        swap_in_time = 0.2
+        p99_e2e_latency = 60
+        min_schedule_time = arrival_time + SLO - cool_down_time - swap_out_time - swap_in_time - p99_e2e_latency
+        return min_schedule_time
 
 
 class Controller:
     def __init__(
         self, tokenizer_managers: Dict[str, TokenizerManager], server_args: ServerArgs
     ):
-        self.model_queues: Dict[str, asyncio.Queue] = {}
+        self.model_queues: Dict[str, deque] = {}
         self.model_status: Dict[str, ModelStatus] = {}
         self.model_unfinished_requests: Dict[str, set[str]] = {}
         self.model_inactive_start_time: Dict[str, float] = {}
@@ -55,7 +73,7 @@ class Controller:
 
         # initialize request queue and unfinished requests for each model
         for model in tokenizer_managers:
-            self.model_queues[model] = asyncio.Queue()
+            self.model_queues[model] = deque()
             self.model_unfinished_requests[model] = set()
             self.model_inactive_start_time[model] = 0
 
@@ -96,14 +114,15 @@ class Controller:
         # put the request into the queue corresponding to the model
         request_wrapper = RequestWrapper(obj, request)
         model = obj.model
-        await self.model_queues[model].put(request_wrapper)
+
+        self.model_queues[model].append(request_wrapper)
         logger.info(f"Request {obj.rid} is put into the queue of model {model}.")
 
         send_future = await request_wrapper.send_to_tokenizer_manager
         # logger.info(f"Request {obj.rid} is sent to the tokenizer manager of model {model}.")
         try:
             ret = await send_future
-            # logger.info(f"Request {obj.rid} has finished processing by model {model}.")
+            logger.info(f"Request {obj.rid} is finished processing by model {model}.")
             return ret
         except Exception as e:
             return JSONResponse(
@@ -130,7 +149,7 @@ class Controller:
 
     async def process_request_loop(self):
         while True:
-            for model in self.model_queues:
+            for model in self.model_status:
                 if self.model_status[model] == ModelStatus.ACTIVE:
                     self._process_model_queue(model)
             await asyncio.sleep(0)
@@ -162,13 +181,14 @@ class Controller:
     def _process_model_queue(self, model: str):
         """Process all requests in the queue for the given model."""
         tokenizer_manager = self.tokenizer_managers[model]
+        
+        qsize = len(self.model_queues[model])
+        self._update_inactive_start_time(model, qsize)
 
-        self._update_inactive_start_time(model, self.model_queues[model])
-
-        while not self.model_queues[model].empty():
+        while len(self.model_queues[model]) > 0:
             self.model_inactive_start_time[model] = 0
 
-            request_wrapper = self.model_queues[model].get_nowait()
+            request_wrapper = self.model_queues[model].popleft()
             assert request_wrapper.obj.stream is False, "Stream is not supported."
             # logger.info(f"Processing request {request_wrapper.obj.rid} of model {model}, with {len(self.model_unfinished_requests[model])} unfinished requests.")
             future = tokenizer_manager.generate_request(
@@ -177,45 +197,38 @@ class Controller:
             request_wrapper.send_to_tokenizer_manager.set_result(future)
             self.model_unfinished_requests[model].add(request_wrapper.req_id)
 
-    def _update_inactive_start_time(self, model, queue):
-        # if self._inactivate_threshold is None:
-        #     return
-        # print(f"Checking model {model} with {queue.qsize()} requests in queue.")
-        if queue.qsize() != 0:
+    def _update_inactive_start_time(self, model, qsize):
+        if qsize > 0:
             # print(f"Reset model_inactive_start_time for model {model}, which has {queue.qsize()} requests in queue.")
             self.model_inactive_start_time[model] = 0
         else:
             if self.model_inactive_start_time[model] == 0:
                 self.model_inactive_start_time[model] = time.time()
-                # print(f"Set model_inactive_start_time for model {model} to {time.time()}.")
-            # else:
-            #     print(f"do not change model_inactive_start_time for model {model}, which is still {self.model_inactive_start_time[model]}.")
-
 
     def should_switch_off_model(self, model, queue):
         # print(f"In should_switch_off_model for model {model}")   
-        if self._inactivate_threshold is not None:
-            if self.model_inactive_start_time[model] != 0:
-                inactivate_time = time.time() - self.model_inactive_start_time[model]
-                # print(f"Model {model} has been inactive for {inactivate_time:.2f} seconds.")
-            else:
-                inactivate_time = 0
-            if inactivate_time > self._inactivate_threshold:
-                logger.info(f"[time={time.time():.2f}] Model {model} has been inactive for {inactivate_time} seconds, switching off.")
-                return True
+        # if self._inactivate_threshold is not None:
+        #     if self.model_inactive_start_time[model] != 0:
+        #         inactivate_time = time.time() - self.model_inactive_start_time[model]
+        #         # print(f"Model {model} has been inactive for {inactivate_time:.2f} seconds.")
+        #     else:
+        #         inactivate_time = 0
+        #     if inactivate_time > self._inactivate_threshold:
+        #         logger.info(f"[time={time.time():.2f}] Model {model} has been inactive for {inactivate_time} seconds, switching off.")
+        #         return True
         return False
 
     async def switch_off_model(self, model):
         logger.info(f"[time={time.time():.2f}] Prepare to switch off model {model}")
         t1 = time.time()
-        tokenizer_manager = self.tokenizer_managers[model]
         self.model_status[model] = ModelStatus.IN_TRANSIT
+        tokenizer_manager = self.tokenizer_managers[model]
         # wait for all requests finish 
         while len(self.model_unfinished_requests[model]) > 0:
             await asyncio.sleep(0)
 
         t2 = time.time()
-        logger.info(f"[time={time.time():.2f}] Start switching off model. Waited {t2-t1:.2f} seconds for ongoing requests to finish.")
+        logger.info(f"[time={time.time():.2f}] Start switching off model {model}. Waited {t2-t1:.2f} seconds for ongoing requests to finish.")
         async with self._available_memory_lock:
             out = await tokenizer_manager.deactivate_model(to_cpu=False)
             self.model_status[model] = ModelStatus.OFF
@@ -229,24 +242,26 @@ class Controller:
 
     async def should_switch_on_model(self, model, queue):
         # print(f"In should_switch_on_model for model {model}")
-        # TODO: check arrival time of the first req in queue.
-        # logger.info(f"Request in queue of model {model} has waited for {self._get_waiting_time(queue):.2f} seconds.")
-        if queue.qsize() >= 32:
-            logger.info(f"[time={time.time():.2f}] Queue size of model {model} is {queue.qsize()}, switching on.")
-            return True
-        # print(f"finish checking queue size of model {model}")
-        if queue.qsize() > 0:
+        # Rule: switch on if current time is larger than the min_schedule_time of the first request in the queue
+        if len(queue) > 0:
+            min_schedule_time = queue[0].min_schedule_time
+            if time.time() > min_schedule_time:
+                logger.info(f"[time={time.time():.2f}] Switch on model {model}, since min_schedule_time {min_schedule_time} is reached.")
+                return True
+
+        qsize = len(queue)
+        # Rule: switch on if the queue size is large enough
+        # if qsize >= 32:
+        #     logger.info(f"[time={time.time():.2f}] Queue size of model {model} is {qsize}, switching on.")
+        #     return True
+        # Rule: switch on if enough memory is available and the queue size is larger than 0
+        if qsize > 0:
             async with self._available_memory_lock:
                 if self._available_memory >= self._memory_needed:
-                    logger.info(f"[time={time.time():.2f}] Switch on model {model}, since memory is enough and it has {queue.qsize()} requests in queue.")
+                    logger.info(f"[time={time.time():.2f}] Switch on model {model}, since memory is enough and it has {qsize} requests in queue.")
                     return True
         # print(f"should not switch on model {model}")
         return False
-
-    def _get_waiting_time(self, queue):
-        if queue.qsize() == 0:
-            return 0
-        return time.time() - queue.queue[0].arrival_time
 
     def _get_active_models(self):
         return [
@@ -264,13 +279,14 @@ class Controller:
 
     async def switch_on_model(self, model):
         logger.info(f"[time={time.time():.2f}] Prepare to switch on model {model}")
+        self.model_status[model] = ModelStatus.IN_TRANSIT
+
         # TODO: switch off multiple models until enough memory is available
         if self._available_memory < self._memory_needed:
             victim_model = self.get_victim_model()
             await self.switch_off_model(victim_model)
 
         tokenizer = self.tokenizer_managers[model]
-        self.model_status[model] = ModelStatus.IN_TRANSIT
         logger.info(f"[time={time.time():.2f}] Switching on model {model}")
         t1 = time.time()
         async with self._available_memory_lock:
