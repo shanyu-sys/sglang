@@ -30,6 +30,7 @@ from sglang.srt.sampling_params import SamplingParams
 class GenerateReqInput:
     # The target model name for generation.
     model: str
+    slo: Optional[float] = None
     # The input prompt. It can be a single prompt or a batch of prompts.
     text: Optional[Union[List[str], str]] = None
     # The token ids for text; one can either specify text or input_ids.

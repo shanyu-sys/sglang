@@ -12,6 +12,7 @@ class Request:
     output_len: int
     arrival_time: float
     model: str
+    slo: Optional[float] = None
 
 
 @dataclasses.dataclass
@@ -27,6 +28,9 @@ class TraceConfig:
     # for synthetic requests
     alpha: Optional[float] = None
     cv: Optional[float] = None
+
+    # slo
+    slo: Optional[float] = None
 
     def __post_init__(self):
         if self.alpha is None:
@@ -75,6 +79,7 @@ def generate_synthetic_reqs(
             output_len=output_lens[i],
             arrival_time=timestamps[i],
             model=config.model_paths[model_indices[i]],
+            slo=config.slo,
         )
         requests.append(req)
     return requests

@@ -50,6 +50,7 @@ class ServerArgs:
     max_total_tokens: Optional[int] = None
     schedule_policy: str = "lpm"
     schedule_conservativeness: float = 1.0
+    swap_policy: str = "baseline"
 
     # Other runtime options
     tp_size: int = 1
@@ -366,6 +367,13 @@ class ServerArgs:
             ],
         )
 
+        parser.add_argument(
+            "--swap-policy",
+            type=str,
+            choices=["baseline", "enhanced"],
+            default=ServerArgs.swap_policy,
+            help="The swap policy for switching models",
+        )
         # Multi-node distributed serving args
         parser.add_argument(
             "--nccl-init-addr",

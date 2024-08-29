@@ -43,20 +43,23 @@ class RequestWrapper:
         self.obj = obj
         self.req_id = obj.rid
         self.model = obj.model
-        self.min_schedule_time = self._get_min_schedule_time()
+        self.min_schedule_time = self._get_min_schedule_time(obj)
         self.request = request
         self.process_model_queue_tasks = {}
         self.event = asyncio.Event()
         self.send_to_tokenizer_manager = asyncio.Future()
 
-    def _get_min_schedule_time(self):
+    def _get_min_schedule_time(self, obj: GenerateReqInput):
         arrival_time = time.time()
-        SLO = 60 * 2 # 3 minutes
+        slo = obj.slo
         cool_down_time = 20 # wait ongoing requests to finish
         swap_out_time = 0.8
         swap_in_time = 0.2
         p99_e2e_latency = 60
-        min_schedule_time = arrival_time + SLO - cool_down_time - swap_out_time - swap_in_time - p99_e2e_latency
+        if slo is None:
+            min_schedule_time = float("inf")
+        else:
+            min_schedule_time = arrival_time + slo - cool_down_time - swap_out_time - swap_in_time - p99_e2e_latency
         return min_schedule_time
 
 
@@ -206,16 +209,16 @@ class Controller:
                 self.model_inactive_start_time[model] = time.time()
 
     def should_switch_off_model(self, model, queue):
-        # print(f"In should_switch_off_model for model {model}")   
-        # if self._inactivate_threshold is not None:
-        #     if self.model_inactive_start_time[model] != 0:
-        #         inactivate_time = time.time() - self.model_inactive_start_time[model]
-        #         # print(f"Model {model} has been inactive for {inactivate_time:.2f} seconds.")
-        #     else:
-        #         inactivate_time = 0
-        #     if inactivate_time > self._inactivate_threshold:
-        #         logger.info(f"[time={time.time():.2f}] Model {model} has been inactive for {inactivate_time} seconds, switching off.")
-        #         return True
+        if self.server_args.swap_policy == "enhanced":
+            if self._inactivate_threshold is not None:
+                if self.model_inactive_start_time[model] != 0:
+                    inactivate_time = time.time() - self.model_inactive_start_time[model]
+                    # print(f"Model {model} has been inactive for {inactivate_time:.2f} seconds.")
+                else:
+                    inactivate_time = 0
+                if inactivate_time > self._inactivate_threshold:
+                    logger.info(f"[time={time.time():.2f}] Model {model} has been inactive for {inactivate_time} seconds, switching off.")
+                    return True
         return False
 
     async def switch_off_model(self, model):

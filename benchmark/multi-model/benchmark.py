@@ -22,7 +22,6 @@ import resource
 
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-SLO = 60 * 2  # 2 minutes
 
 global args
 
@@ -46,6 +45,7 @@ class RequestFuncOutput:
     prompt_len: int = 0
     error: str = ""
     output_len: int = 0
+    slo: float = 0.0
 
 
 async def send_generate_request(
@@ -67,6 +67,7 @@ async def send_generate_request(
             "sampling_params": sampling_params,
             "rid": req.req_id,
             "model": req.model,
+            "slo": req.slo,
         }
     else:
         raise ValueError(f"Unknown backend: {backend}")
@@ -74,6 +75,7 @@ async def send_generate_request(
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         output = RequestFuncOutput()
         output.prompt_len = req.prompt_len
+        output.slo = req.slo
 
         ttft = 0.0
         st = time.perf_counter()
@@ -321,6 +323,7 @@ def calculate_metrics(
     tpots: List[float] = []
     ttfts: List[float] = []
     e2e_latencies: List[float] = []
+    attainment: List[int] = []
     for i in range(len(outputs)):
         if outputs[i].success:
             output_len = outputs[i].output_len
@@ -332,13 +335,13 @@ def calculate_metrics(
             ttfts.append(outputs[i].ttft)
 
             e2e_latencies.append(outputs[i].latency)
+            attainment.append(1 if outputs[i].latency < outputs[i].slo else 0)
 
             completed += 1
         else:
             output_lens.append(0)
             retokenized_output_lens.append(0)
 
-    attainment = [1 if e2e_latency < SLO else 0 for e2e_latency in e2e_latencies]
     if completed == 0:
         warnings.warn(
             "All requests failed. This is likely due to a misconfiguration "
@@ -430,8 +433,7 @@ def set_ulimit(target_soft_limit=65535):
 
 def get_output_file_name(trace_config, mode):
     now = datetime.now().strftime("%m%d")
-    prefix = f"{now}_{mode}_duration_{trace_config.duration}"
-    filename = f"{prefix}_req_rate-{trace_config.req_rate}_alpha-{trace_config.alpha}_cv-{trace_config.cv}_input-{trace_config.input_range[0]}-{trace_config.input_range[1]}_output-{trace_config.output_range[0]}-{trace_config.output_range[1]}.json"
+    filename = f"{now}_{mode}_duration-{trace_config.duration}_req_rate-{trace_config.req_rate}_alpha-{trace_config.alpha}_cv-{trace_config.cv}_slo-{trace_config.slo}.json"
 
     # if exp_name == "changing_req_rate":
     #     filename = f"{prefix}_cv-{trace_config.cv}_alpha-{trace_config.alpha}.json"
