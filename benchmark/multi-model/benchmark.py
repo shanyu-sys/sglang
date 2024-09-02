@@ -247,6 +247,7 @@ async def benchmark(
             "alpha": alpha,
             "cv": cv,
             "request_duration": request_duration,
+            "benchmark_duration": benchmark_duration,
             "average_input_tokens": metrics.total_input / metrics.completed,
             "average_output_tokens": metrics.total_output / metrics.completed,
             "request_throughput": metrics.request_throughput,
@@ -335,7 +336,10 @@ def calculate_metrics(
             ttfts.append(outputs[i].ttft)
 
             e2e_latencies.append(outputs[i].latency)
-            attainment.append(1 if outputs[i].latency < outputs[i].slo else 0)
+            if outputs[i].slo is not None:
+                attainment.append(1 if outputs[i].latency < outputs[i].slo else 0)
+            else:
+                attainment.append(1)
 
             completed += 1
         else:

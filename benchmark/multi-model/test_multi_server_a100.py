@@ -1,0 +1,298 @@
+import os
+import unittest
+from types import SimpleNamespace
+import requests
+import subprocess
+import time
+from trace import TraceConfig
+
+from benchmark import run_benchmark
+from sglang.srt.server_args import ServerArgs
+from sglang.srt.utils import kill_child_process
+from datetime import datetime
+
+
+DEFAULT_URL_FOR_E2E_TEST = "http://127.0.0.1:9157"
+DEFAULT_MODEL_NAMES_FOR_TEST = ["meta-llama/Llama-2-7b-chat-hf", "meta-llama/Llama-2-7b-hf"]
+SEED = 42
+DURATION = 60 * 5  # 5 minutes
+
+def popen_launch_server(
+    models: list[str],
+    mem_frac: list[float],
+    init_scheduled_models: list[str],
+    server_log_file: str,
+    base_url: str,
+    timeout: float,
+    other_args: tuple = (),
+):
+    _, host, port = base_url.split(":")
+    host = host[2:]
+
+    mem_frac = [str(f) for f in mem_frac]
+
+    command = [
+        "python3",
+        "-m",
+        "sglang.launch_server",
+        "--model-paths",
+        *models,
+        "--host",
+        host,
+        "--port",
+        port,
+        "--disable-cuda-graph",
+        "--disable-radix-cache",
+        "--load-format",
+        "dummy",
+        "--mem-fraction-statics",
+        *mem_frac,
+        "--init-scheduled-models",
+        *init_scheduled_models,
+        "--log-file",
+        server_log_file,
+        *other_args,
+    ]
+
+    printed_cmd = " ".join(command)
+
+    print(f"Launching server with command: {printed_cmd}")
+
+    process = subprocess.Popen(command, stdout=None, stderr=None)
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            headers = {
+                # "Content-Type": "application/json; charset=utf-8",
+            }
+            response = requests.get(f"{base_url}/get_model_info", headers=headers)
+            if response.status_code == 200:
+                time.sleep(2)
+                return process
+        except requests.RequestException:
+            pass
+        time.sleep(10)
+    raise TimeoutError("Server failed to start within the timeout period.")
+
+def get_server_log_file_name(trace_config, mode):
+    if not os.path.exists("server-logs"):
+        os.makedirs("server-logs")
+
+    now = datetime.now().strftime("%m%d")
+
+    filename = f"{now}_{mode}_duration-{trace_config.duration}_req_rate-{trace_config.req_rate}_alpha-{trace_config.alpha}_cv-{trace_config.cv}_slo-{trace_config.slo}.log"
+    path = os.path.join("server-logs", filename)
+    return path
+
+
+class TestMultiServer(unittest.TestCase):
+
+    def run_test(self, 
+                 models: list[str],
+                 mem_frac: list[float],
+                 init_scheduled_models: list[str],
+                 trace_config: TraceConfig,
+                 debug: bool = False,
+                 mode: str = None,
+                 other_args: tuple = ()
+                 ):
+        
+        # Launch the server
+        base_url = DEFAULT_URL_FOR_E2E_TEST
+
+        server_log_file = get_server_log_file_name(trace_config, mode)
+    
+        process = popen_launch_server(
+            models=models,
+            mem_frac=mem_frac,
+            init_scheduled_models=init_scheduled_models,
+            server_log_file=server_log_file,
+            base_url=base_url,
+            timeout=300,
+            other_args=other_args,
+        )
+
+        # Run benchmark
+        args = SimpleNamespace(
+            backend="srt",
+            base_url=base_url,
+            debug=debug,
+            model_paths=models,
+            mode=mode,
+            seed=SEED,
+            disable_tqdm=False,
+            results_path="benchmark-results"
+        )
+
+        try:
+            res = run_benchmark(args, trace_config)
+        finally:
+            kill_child_process(process.pid)
+
+        return res
+    
+    def run_swap_test(self, req_rate, cv, alpha, slo, swap_policy="baseline"):
+        trace_config = TraceConfig(
+                req_rate=req_rate,
+                duration=DURATION,
+                input_range=[8, 1024],
+                output_range=[8, 512],
+                model_paths=DEFAULT_MODEL_NAMES_FOR_TEST,
+                seed=SEED,
+                alpha=alpha,
+                cv=cv,
+                slo=slo,
+            )
+
+        res = self.run_test(
+            models=DEFAULT_MODEL_NAMES_FOR_TEST,
+            mem_frac=[0.8, 0.8],
+            init_scheduled_models=[DEFAULT_MODEL_NAMES_FOR_TEST[0]],
+            trace_config=trace_config,
+            mode=f"swap-{swap_policy}",
+            other_args=("--inactivate-threshold", "15.0", "--swap-policy", swap_policy)
+        )
+
+        print(f"**** Finshed running swap test with trace config {trace_config} ****")
+        print(f"Request throughput: {res['request_throughput']}")
+
+    def run_collocate_test(self, req_rate, cv, alpha, slo):
+        trace_config = TraceConfig(
+                req_rate=req_rate,
+                duration=DURATION,
+                input_range=[8, 1024],
+                output_range=[8, 512],
+                model_paths=DEFAULT_MODEL_NAMES_FOR_TEST,
+                seed=SEED,
+                alpha=alpha,
+                cv=cv,
+                slo=slo,
+            )
+        # total_memory/model_weights need to be changed based on application
+        total_memory = 37.5
+        total_memory_ratio = 0.8
+        model_weights = [10, 10]
+        kv_cache_memory = total_memory * total_memory_ratio - sum(model_weights)
+        p1 = (1/2)**alpha
+        p2 = 1 - p1
+        model1_memory = model_weights[0] + kv_cache_memory * p1
+        model2_memory = model_weights[1] + kv_cache_memory * p2
+        mem_fracs = [model1_memory / total_memory, model2_memory / (total_memory - model1_memory)]
+
+        res = self.run_test(
+            models=DEFAULT_MODEL_NAMES_FOR_TEST,
+            mem_frac=mem_fracs,
+            init_scheduled_models=DEFAULT_MODEL_NAMES_FOR_TEST,
+            trace_config=trace_config,
+            mode="collocate",
+        )
+        print(f"**** Finshed running collocate test with trace config {trace_config} ****")
+        print(f"Request throughput: {res['request_throughput']}")
+
+    def run_single_model_test(self, req_rate, cv, alpha, slo):
+        model_paths = [DEFAULT_MODEL_NAMES_FOR_TEST[0]]
+
+        trace_config = TraceConfig(
+                req_rate=req_rate,
+                duration=DURATION,
+                input_range=[8, 1024],
+                output_range=[8, 512],
+                model_paths=model_paths,
+                seed=SEED,
+                alpha=alpha,
+                cv=cv,
+                slo=slo,
+            )
+            
+        res = self.run_test(
+            models=model_paths,
+            mem_frac=[0.8],
+            init_scheduled_models=model_paths,
+            trace_config=trace_config,
+            mode="single-model"
+        )
+        print(f"**** Finshed running single model test of {model_paths} with trace config {trace_config} ****")
+        print(f"Request throughput: {res['request_throughput']}")
+
+    def test_swap_baseline(self):
+        req_rates = [1, 2, 4, 6, 8, 16]
+        for req_rate in req_rates:
+            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=60*2, swap_policy="baseline")
+    
+    def test_swap_enhanced(self):
+        req_rates = [1, 2, 4, 6, 8, 16]
+        for req_rate in req_rates:
+            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=60*2, swap_policy="enhanced")
+
+    def test_collocate(self):
+        req_rates = [12]
+        cv = 1
+        alphas = [0.1, 0.3, 1]
+        for req_rate in req_rates:
+            for alpha in alphas:
+                self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=60*2)
+
+        # req_rates = [0.6, 1, 2, 4, 8]
+        # alphas = [0.1, 0.3, 0.6, 1]
+        # for req_rate in req_rates:
+        #     for alpha in alphas:
+        #         self.run_collocate_test(req_rate=req_rate, cv=1, alpha=alpha, slo=60*2)
+
+    def test_single_model(self):
+        req_rates = [1, 2, 4, 6, 8, 16]
+        for req_rate in req_rates:
+            self.run_single_model_test(req_rate=req_rate, cv=1, alpha=1, slo=60*2)
+
+    def test_all_one(self):
+        req_rate = 1
+        cv = 1
+        alpha = 1
+        print(f"Start running swap test with req_rate={req_rate}, cv={cv}, alpha={alpha}")
+        self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha)
+        print(f"Start running collocate test with req_rate={req_rate}, cv={cv}, alpha={alpha}")
+        self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha)
+        print(f"Start running single model test with req_rate={req_rate}, cv={cv}, alpha={alpha}")
+        self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha)
+
+    def test_swap_one(self):
+        req_rate = 1
+        cv = 1
+        alpha = 0.1
+        self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, swap_policy="baseline")
+        self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, swap_policy="enhanced")
+
+    def test_all(self):
+        req_rates = [12, 16, 20, 24]
+        cv = 1
+        alphas = [0.1, 0.3, 0.6, 1]
+        slos = [60*3]
+        for req_rate in req_rates:
+            for alpha in alphas:
+                for slo in slos:
+                    if req_rate == 12 and alpha == 0.1:
+                        continue
+                    if req_rate == 12 and alpha == 0.3:
+                        continue
+                    if req_rate == 12 and alpha == 0.6:
+                        continue
+                    
+                    print(f"**** Start test req_rate={req_rate}, cv={cv}, alpha={alpha} ****")
+                    # self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo, swap_policy="baseline")
+                    self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo, swap_policy="enhanced")
+                    # self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo)
+                    # self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo)
+
+        # req_rates = [1, 2, 4, 8, 16]
+        # alpha = 1
+        # cvs = [0.1, 2, 4]
+        # for req_rate in req_rates:
+        #     for cv in cvs:
+        #         print(f"**** Start test req_rate={req_rate}, cv={cv}, alpha={alpha} ****")
+        #         self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha)
+        #         self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha)
+        #         self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha)
+        
+
+if __name__ == "__main__":
+    unittest.main()
