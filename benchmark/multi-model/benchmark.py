@@ -201,6 +201,12 @@ async def benchmark(
             "Output token throughput (tok/s):", metrics.output_throughput
         )
     )
+    print(
+        "{:<40} {:<10.2f}".format(
+            "Input + Output token throughput (tok/s):",
+            metrics.input_output_throughput,
+        )
+    )
     print("{s:{c}^{n}}".format(s="End-to-End Latency", n=50, c="-"))
     print(
         "{:<40} {:<10.2f}".format("Mean E2E Latency (ms):", metrics.mean_e2e_latency_ms)
@@ -259,8 +265,9 @@ async def benchmark(
             # "median_itl_ms": metrics.median_itl_ms,
             "duration": benchmark_duration,
             "completed": metrics.completed,
-            # "input_throughput": metrics.input_throughput,
-            # "output_throughput": metrics.output_throughput,
+            "input_throughput": metrics.input_throughput,
+            "output_throughput": metrics.output_throughput,
+            "input_output_throughput": metrics.input_output_throughput,
             # "mean_ttft_ms": metrics.mean_ttft_ms,
             # "std_ttft_ms": metrics.std_ttft_ms,
             "p99_ttft_ms": metrics.p99_ttft_ms,
@@ -293,6 +300,7 @@ class BenchmarkMetrics:
     request_throughput: float
     input_throughput: float
     output_throughput: float
+    input_output_throughput: float
     mean_ttft_ms: float
     median_ttft_ms: float
     std_ttft_ms: float
@@ -359,6 +367,7 @@ def calculate_metrics(
         request_throughput=completed / dur_s,
         input_throughput=total_input / dur_s,
         output_throughput=sum(output_lens) / dur_s,
+        input_output_throughput=(total_input + sum(output_lens)) / dur_s,
         mean_ttft_ms=np.mean(ttfts or 0)
         * 1000,  # ttfts is empty if streaming is not supported by backend
         median_ttft_ms=np.median(ttfts or 0) * 1000,
