@@ -156,6 +156,11 @@ class ModelRunner:
         )
 
         if self._model_on_cpu:
+            logger.info(
+                f"[{self.model_path}]"
+                f"[gpu={self.gpu_id}] Model is already on CPU. Swapping to GPU. "
+                f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
+            )
             self.model.to("cuda")
             self._model_on_cpu = False
         else:
@@ -193,6 +198,9 @@ class ModelRunner:
         if to_cpu and self.model is not None:
             self.model.to("cpu")
             self._model_on_cpu = True
+            logger.info(
+                f"[time={time.time()}][model_name={self.model_path}][gpu_id={self.gpu_id}] swap out to cpu takes {time.perf_counter() - begin_swap:.2f} s"
+            )
         else:
             del self.model
             self._model_on_cpu = False

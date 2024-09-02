@@ -233,7 +233,7 @@ class Controller:
         t2 = time.time()
         logger.info(f"[time={time.time():.2f}] Start switching off model {model}. Waited {t2-t1:.2f} seconds for ongoing requests to finish.")
         async with self._available_memory_lock:
-            out = await tokenizer_manager.deactivate_model(to_cpu=False)
+            out = await tokenizer_manager.deactivate_model(to_cpu=True)
             self.model_status[model] = ModelStatus.OFF
             self._available_memory += self._memory_needed
 
