@@ -161,7 +161,7 @@ class ModelRunner:
                 f"[gpu={self.gpu_id}] Model is already on CPU. Swapping to GPU. "
                 f"avail mem={get_available_gpu_memory(self.gpu_id):.2f} GB"
             )
-            self.model.to("cuda")
+            self.model.to(f"cuda:{self.gpu_id}")
             self._model_on_cpu = False
         else:
             self.load_model()
