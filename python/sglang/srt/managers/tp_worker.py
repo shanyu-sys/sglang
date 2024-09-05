@@ -123,6 +123,7 @@ class ModelTpServer:
 
         # Init running status
         self.waiting_queue: List[Req] = []
+        self._abort_req_list = []
         self.running_batch: Batch = None
         self.out_pyobjs = []
         self.decode_forward_ct = 0
@@ -259,6 +260,9 @@ class ModelTpServer:
         assert self._activated, "ModelTpServer has not been activated"
         new_batch = self.get_new_prefill_batch()
 
+        # Handle abort requests
+        self.handle_abort_requests()
+
         if new_batch is not None:
             if not self.model_runner._activated:
                 raise ValueError(f"{self.model_name} model_runner is not activated, but new_batch for prefill is not None")
@@ -338,7 +342,8 @@ class ModelTpServer:
         recv_req: TokenizedGenerateReqInput,
     ):
         assert self._activated, "ModelTpServer has not been activated"
-        req = Req(recv_req.rid, recv_req.input_text, recv_req.input_ids)
+        req = Req(recv_req.rid, recv_req.input_text, recv_req.input_ids,
+                  recv_req.arrival_time, recv_req.slo)
         req.pixel_values = recv_req.pixel_values
         if req.pixel_values is not None:
             req.pad_value = [
@@ -389,6 +394,11 @@ class ModelTpServer:
         )
         self.waiting_queue.append(req)
 
+    def _should_abort_req(self, req):
+        if req.slo is not None and time.time() + 0.5 - req.arrival_time > req.slo:
+            return True
+        return False
+
     def get_new_prefill_batch(self) -> Optional[Batch]:
         # TODO(lsyin): organize this function
         running_bs = (
@@ -397,8 +407,12 @@ class ModelTpServer:
         if running_bs >= self.max_running_requests:
             return
 
+        self._abort_req_list = []
         # Compute matched prefix length
         for req in self.waiting_queue:
+            if self._should_abort_req(req):
+                self._abort_req_list.append(req)
+                continue
             req.input_ids = req.origin_input_ids + req.output_ids
             prefix_indices, last_node = self.tree_cache.match_prefix(
                 rid=req.rid,
@@ -409,6 +423,9 @@ class ModelTpServer:
             req.extend_input_len = len(req.input_ids) - len(prefix_indices)
             req.prefix_indices = prefix_indices
             req.last_node = last_node
+
+        # Abort requests
+        self.waiting_queue = [x for x in self.waiting_queue if x not in self._abort_req_list]
 
         # Get priority queue
         self.waiting_queue = self.scheduler.get_priority_queue(self.waiting_queue)
@@ -736,6 +753,17 @@ class ModelTpServer:
                     req.output_top_logprobs.append(output.output_top_logprobs[i])
 
         self.handle_finished_requests(batch)
+    
+    def handle_abort_requests(self):
+        req_id_list = []
+        for req in self._abort_req_list:
+            req.finished_reason = FINISH_ABORT()
+            req_id_list.append(req.rid)
+        if req_id_list:
+            self.out_pyobjs.append(
+                BatchAbortReq(req_id_list)
+            )
+        self._abort_req_list = []
 
     def handle_finished_requests(self, batch: Batch):
         output_rids = []

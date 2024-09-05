@@ -235,6 +235,8 @@ class TokenizerManager:
             logprob_start_len,
             top_logprobs_num,
             obj.stream,
+            obj.arrival_time,
+            obj.slo,
         )
         self.send_to_router.send_pyobj(tokenized_obj)
 

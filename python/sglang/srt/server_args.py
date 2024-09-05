@@ -87,6 +87,7 @@ class ServerArgs:
     enable_mla: bool = False
     attention_reduce_in_fp32: bool = False
     efficient_weight_load: bool = False
+    enable_abort: bool = False
 
     # Distributed args
     nccl_init_addr: Optional[str] = None
@@ -449,6 +450,11 @@ class ServerArgs:
             "--efficient-weight-load",
             action="store_true",
             help="Turn on memory efficient weight loading with quantization (quantize per layer during loading).",
+        )
+        parser.add_argument(
+            "--enable-abort",
+            action="store_true",
+            help="Enable abort mechanism to stop the request processing.",
         )
 
     @classmethod

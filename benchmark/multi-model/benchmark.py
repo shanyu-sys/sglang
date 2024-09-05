@@ -183,6 +183,7 @@ async def benchmark(
     print("{:<40} {:<10}".format("Alpha:", alpha))
     print("{:<40} {:<10}".format("CV:", cv))
     print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
+    print("{:<40} {:<10}".format("Aborted requests:", metrics.aborted))
     print("{:<40} {:<10.2f}".format("Benchmark duration (s):", benchmark_duration))
     print("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
     print("{:<40} {:<10}".format("Total generated tokens:", metrics.total_output))
@@ -265,6 +266,7 @@ async def benchmark(
             # "median_itl_ms": metrics.median_itl_ms,
             "duration": benchmark_duration,
             "completed": metrics.completed,
+            "aborted": metrics.aborted,
             "input_throughput": metrics.input_throughput,
             "output_throughput": metrics.output_throughput,
             "input_output_throughput": metrics.input_output_throughput,
@@ -295,6 +297,7 @@ async def benchmark(
 @dataclass
 class BenchmarkMetrics:
     completed: int
+    aborted: int
     total_input: int
     total_output: int
     request_throughput: float
@@ -328,6 +331,7 @@ def calculate_metrics(
     retokenized_output_lens: List[int] = []
     total_input = 0
     completed = 0
+    aborted = 0
     itls: List[float] = []
     tpots: List[float] = []
     ttfts: List[float] = []
@@ -353,6 +357,8 @@ def calculate_metrics(
         else:
             output_lens.append(0)
             retokenized_output_lens.append(0)
+            attainment.append(0)
+            aborted += 1
 
     if completed == 0:
         warnings.warn(
@@ -362,6 +368,7 @@ def calculate_metrics(
         )
     metrics = BenchmarkMetrics(
         completed=completed,
+        aborted=aborted,
         total_input=total_input,
         total_output=sum(output_lens),
         request_throughput=completed / dur_s,

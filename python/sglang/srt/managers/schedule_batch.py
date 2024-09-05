@@ -19,7 +19,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 from enum import IntEnum, auto
-from typing import List, Union
+from typing import List, Union, Optional
 
 import numpy as np
 import torch
@@ -101,7 +101,9 @@ class FINISH_ABORT(BaseFinishReason):
 class Req:
     """Store all inforamtion of a request."""
 
-    def __init__(self, rid, origin_input_text, origin_input_ids):
+    def __init__(self, rid, origin_input_text, origin_input_ids,
+                 arrival_time: Optional[float] = None,
+                 slo: Optional[float] = None):
         # Input and output info
         self.rid = rid
         self.origin_input_text = origin_input_text
@@ -109,6 +111,8 @@ class Req:
         self.origin_input_ids = origin_input_ids
         self.output_ids = []  # Each decode stage's output ids
         self.input_ids = None  # input_ids = origin_input_ids + output_ids
+        self.arrival_time = arrival_time
+        self.slo = slo
 
         # For incremental decoding
         # ----- | --------- read_ids -------|

@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Union
 
 from sglang.srt.managers.schedule_batch import BaseFinishReason
 from sglang.srt.sampling_params import SamplingParams
+import time
 
 
 @dataclass
@@ -53,6 +54,9 @@ class GenerateReqInput:
     # Whether to stream output.
     stream: bool = False
 
+    # Arrival time of the request.
+    arrival_time: Optional[float] = None
+
     def post_init(self):
         if (self.text is None and self.input_ids is None) or (
             self.text is not None and self.input_ids is not None
@@ -69,6 +73,9 @@ class GenerateReqInput:
             else:
                 is_single = isinstance(self.input_ids[0], int)
         self.is_single = is_single
+        self.arrival_time = self.arrival_time if self.arrival_time is not None else time.time()
+        if self.slo is None:
+            self.slo = float("inf")
 
         if is_single:
             if self.sampling_params is None:
@@ -167,6 +174,8 @@ class TokenizedGenerateReqInput:
     logprob_start_len: int
     top_logprobs_num: int
     stream: bool
+    arrival_time: float
+    slo: float
 
 
 @dataclass
@@ -206,6 +215,9 @@ class FlushCacheReq:
 class AbortReq:
     rid: str
 
+class BatchAbortReq:
+    def __init__(self, req_ids):
+        self.reqs: List[str] = req_ids
 
 @dataclass
 class DetokenizeReqInput:

@@ -51,6 +51,7 @@ def popen_launch_server(
         *init_scheduled_models,
         "--log-file",
         server_log_file,
+        "--enable-abort",
         *other_args,
     ]
 
@@ -132,10 +133,10 @@ class TestMultiServer(unittest.TestCase):
 
         return res
     
-    def run_swap_test(self, req_rate, cv, alpha, slo, swap_policy="baseline"):
+    def run_swap_test(self, req_rate, cv, alpha, slo, duration=DURATION, swap_policy="baseline"):
         trace_config = TraceConfig(
                 req_rate=req_rate,
-                duration=DURATION,
+                duration=duration,
                 input_range=[8, 1024],
                 output_range=[8, 512],
                 model_paths=DEFAULT_MODEL_NAMES_FOR_TEST,
@@ -155,12 +156,13 @@ class TestMultiServer(unittest.TestCase):
         )
 
         print(f"**** Finshed running swap test with trace config {trace_config} ****")
-        print(f"Request throughput: {res['request_throughput']}")
+        print(f"Request throughput: {res['request_throughput']:.2f}")
+        print(f"Token throughput: {res['input_output_throughput']:.2f}")
 
-    def run_collocate_test(self, req_rate, cv, alpha, slo):
+    def run_collocate_test(self, req_rate, cv, alpha, slo, duration=DURATION):
         trace_config = TraceConfig(
                 req_rate=req_rate,
-                duration=DURATION,
+                duration=duration,
                 input_range=[8, 1024],
                 output_range=[8, 512],
                 model_paths=DEFAULT_MODEL_NAMES_FOR_TEST,
@@ -190,12 +192,12 @@ class TestMultiServer(unittest.TestCase):
         print(f"**** Finshed running collocate test with trace config {trace_config} ****")
         print(f"Request throughput: {res['request_throughput']}")
 
-    def run_single_model_test(self, req_rate, cv, alpha, slo):
+    def run_single_model_test(self, req_rate, cv, alpha, slo, duration=DURATION):
         model_paths = [DEFAULT_MODEL_NAMES_FOR_TEST[0]]
 
         trace_config = TraceConfig(
                 req_rate=req_rate,
-                duration=DURATION,
+                duration=duration,
                 input_range=[8, 1024],
                 output_range=[8, 512],
                 model_paths=model_paths,
@@ -221,9 +223,11 @@ class TestMultiServer(unittest.TestCase):
             self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=60*2, swap_policy="baseline")
     
     def test_swap_enhanced(self):
-        req_rates = [1, 2, 4, 6, 8, 16]
+        # req_rates = [1, 2, 4, 6, 8, 16]
+        req_rates = [16]
+
         for req_rate in req_rates:
-            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=60*2, swap_policy="enhanced")
+            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=60, duration=60, swap_policy="enhanced")
 
     def test_collocate(self):
         req_rates = [0.6, 1, 2, 4, 8]
@@ -259,7 +263,7 @@ class TestMultiServer(unittest.TestCase):
         req_rates = [1, 2, 4, 6, 8, 10]
         cv = 1
         alphas = [0.1, 0.3, 0.6, 1]
-        slos = [100, 60*2, 60*3]
+        slos = [100, 60*2, 60*3, None]
         for req_rate in req_rates:
             for alpha in alphas:
                 for slo in slos:

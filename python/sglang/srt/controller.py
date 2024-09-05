@@ -43,6 +43,7 @@ class RequestWrapper:
         self.obj = obj
         self.req_id = obj.rid
         self.model = obj.model
+        self.arrival_time = obj.arrival_time
         self.min_schedule_time = self._get_min_schedule_time(obj)
         self.request = request
         self.process_model_queue_tasks = {}
@@ -50,7 +51,6 @@ class RequestWrapper:
         self.send_to_tokenizer_manager = asyncio.Future()
 
     def _get_min_schedule_time(self, obj: GenerateReqInput):
-        arrival_time = time.time()
         slo = obj.slo
         cool_down_time = 20 # wait ongoing requests to finish
         swap_out_time = 0.8
@@ -59,7 +59,7 @@ class RequestWrapper:
         if slo is None:
             min_schedule_time = float("inf")
         else:
-            min_schedule_time = arrival_time + slo - cool_down_time - swap_out_time - swap_in_time - p99_e2e_latency
+            min_schedule_time = self.arrival_time + slo - cool_down_time - swap_out_time - swap_in_time - p99_e2e_latency
         return min_schedule_time
 
 
@@ -123,16 +123,25 @@ class Controller:
 
         send_future = await request_wrapper.send_to_tokenizer_manager
         # logger.info(f"Request {obj.rid} is sent to the tokenizer manager of model {model}.")
+    
         try:
             ret = await send_future
             logger.info(f"Request {obj.rid} is finished processing by model {model}.")
             return ret
+        except asyncio.CancelledError:
+            logger.warning(f"Request {obj.rid} was cancelled because it exceeded SLO.")
+            return JSONResponse(
+                {"error": {"message": f"Request {obj.rid} exceeded SLO"}}, 
+            status_code=HTTPStatus.REQUEST_TIMEOUT
+        )
         except Exception as e:
+            logger.error(f"Error in processing request {obj.rid}: {e}")
             return JSONResponse(
                 {"error": {"message": str(e)}}, status_code=HTTPStatus.BAD_REQUEST
             )
         finally:
-            self.model_unfinished_requests[model].remove(request_wrapper.req_id)
+            if request_wrapper.req_id in self.model_unfinished_requests[model]:
+                self.model_unfinished_requests[model].remove(request_wrapper.req_id)
 
     def _create_loop(self):
         self.to_create_loop = False
@@ -154,11 +163,14 @@ class Controller:
         while True:
             for model in self.model_status:
                 if self.model_status[model] == ModelStatus.ACTIVE:
-                    self._process_model_queue(model)
+                    try: 
+                        self._process_model_queue(model)
+                    except Exception as e:
+                        logger.error(f"Error in processing model {model} queue: {e}")
+                        raise e
             await asyncio.sleep(0)
 
     async def may_switch_model(self):
-        # print("******* In may_switch_model *******")
         for model, queue in self.model_queues.items():
             # print(f"model {model} of status {self.model_status[model] } has {queue.qsize()} requests in queue.")
             if self.model_status[model] == ModelStatus.OFF:
@@ -193,7 +205,15 @@ class Controller:
 
             request_wrapper = self.model_queues[model].popleft()
             assert request_wrapper.obj.stream is False, "Stream is not supported."
-            # logger.info(f"Processing request {request_wrapper.obj.rid} of model {model}, with {len(self.model_unfinished_requests[model])} unfinished requests.")
+
+            # abort request if exceed SLO
+            if time.time() + 0.5 - request_wrapper.arrival_time > request_wrapper.obj.slo:
+                # do not send to tokenizer manager to generate response
+                future = asyncio.Future()
+                future.cancel()
+                request_wrapper.send_to_tokenizer_manager.set_result(future)
+                continue
+
             future = tokenizer_manager.generate_request(
                 request_wrapper.obj, request_wrapper.request
             ).__anext__()
