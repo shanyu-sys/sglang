@@ -29,6 +29,7 @@ import threading
 import time
 from http import HTTPStatus
 from typing import Dict, List, Optional, Union
+from collections import defaultdict
 
 # Fix a bug of Python threading
 setattr(threading, "_register_atexit", lambda *args, **kwargs: None)
@@ -76,6 +77,8 @@ from sglang.srt.utils import (
     maybe_set_triton_cache_manager,
     set_torch_compile_config,
     set_ulimit,
+    get_num_gpus,
+    roundrobin,
 )
 from sglang.utils import get_exception_traceback
 
@@ -86,7 +89,7 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 app = FastAPI()
 # mapping from model_name to tokenizer_manager
-tokenizer_managers = {}
+tokenizer_managers = defaultdict(list)
 controller = None
 
 
@@ -99,7 +102,7 @@ async def health() -> Response:
 @app.get("/get_model_info")
 async def get_model_info():
     result = {
-        "model_paths": [tm.model_path for tm in tokenizer_managers.values()],
+        "model_paths": [tms[0].model_path for tms in tokenizer_managers.values()],
     }
     return result
 
@@ -107,14 +110,16 @@ async def get_model_info():
 @app.get("/get_server_args")
 async def get_server_args():
     # the server_args in any of the tokenizer_managers
-    tokenizer_manager = next(iter(tokenizer_managers.values()))
+    # tokenizer_manager = next(iter(tokenizer_managers.values()))
+    tokenizer_manager = tokenizer_managers.values()[0][0]
     return dataclasses.asdict(tokenizer_manager.server_args)
 
 
 @app.get("/flush_cache")
 async def flush_cache():
-    for tokenizer_manager in tokenizer_managers.values():
-        tokenizer_manager.flush_cache()
+    for tms in tokenizer_managers.values():
+        for tokenizer_manager in tms:
+            tokenizer_manager.flush_cache()
     return Response(
         content="Cache flushed.\nPlease check backend logs for more details. "
         "(When there are running or waiting requests, the operation will not be performed.)\n",
@@ -188,22 +193,27 @@ def launch_server(
 
     # Allocate ports
     num_models = len(server_args.model_paths)
+    num_model_replicas = sum(server_args.max_model_replicas)
 
-    server_args.port, each_model_ports = allocate_init_ports(
+    server_args.port, each_model_replica_ports = allocate_init_ports(
         server_args.port,
-        num_models,
+        num_model_replicas,
         server_args.dp_size,
     )
-    port_args_list = []
+    port_args_dict = defaultdict(list)
+    port_idx = 0
     for i in range(num_models):
-        ports = each_model_ports[i]
-        port_args = PortArgs(
-            tokenizer_port=ports[0],
-            controller_port=ports[1],
-            detokenizer_port=ports[2],
-            nccl_ports=ports[3:],
-        )
-        port_args_list.append(port_args)
+        n_replica = server_args.max_model_replicas[i]
+        for j in range(n_replica):
+            ports = each_model_replica_ports[port_idx]
+            port_args = PortArgs(
+                tokenizer_port=ports[0],
+                controller_port=ports[1],
+                detokenizer_port=ports[2],
+                nccl_ports=ports[3:],
+            )
+            port_args_dict[i].append(port_args)
+            port_idx += 1
 
     assert (
         server_args.nnodes == 1
@@ -236,63 +246,72 @@ def launch_server(
     pipe_detoken_list = []
     proc_controller_list = []
     proc_detoken_list = []
-    for i, model in enumerate(server_args.model_paths):
-        port_args = port_args_list[i]
-        tokenizer_manager = TokenizerManager(
-            i, server_args, port_args, model_overide_args
-        )
-        tokenizer_managers[model] = tokenizer_manager
-        pipe_controller_reader, pipe_controller_writer = mp.Pipe(duplex=False)
-        pipe_detoken_reader, pipe_detoken_writer = mp.Pipe(duplex=False)
+    num_gpus = get_num_gpus()
+    gpus = roundrobin(range(num_gpus))
 
-        pipe_controller_list.append((pipe_controller_reader, pipe_controller_writer))
-        pipe_detoken_list.append((pipe_detoken_reader, pipe_detoken_writer))
-
-        if server_args.dp_size == 1:
-            start_process = start_controller_process_single
-        else:
-            start_process = start_controller_process_multi
-        proc_controller = mp.Process(
-            target=start_process,
-            args=(
-                i,
-                server_args,
-                port_args,
-                pipe_controller_writer,
-                model_overide_args,
-            ),
-        )
-        proc_controller.start()
-        proc_detoken = mp.Process(
-            target=start_detokenizer_process,
-            args=(
-                i,
-                server_args,
-                port_args,
-                pipe_detoken_writer,
-            ),
-        )
-        proc_detoken.start()
-
-        proc_controller_list.append(proc_controller)
-        proc_detoken_list.append(proc_detoken)
-
-        # Wait for the model to finish loading
-        controller_init_state = pipe_controller_reader.recv()
-        detoken_init_state = pipe_detoken_reader.recv()
-
-        if controller_init_state != "init ok" or detoken_init_state != "init ok":
-            proc_controller.kill()
-            proc_detoken.kill()
-            print(
-                f"Initialization failed. controller_init_state: {controller_init_state}",
-                flush=True,
+    for model_idx, model in enumerate(server_args.model_paths):
+        port_args_list = port_args_dict[model_idx]
+        for j in range(len(port_args_list)):
+            print(f"creating model {model_idx} replica {j} for model {model}")
+            port_args = port_args_list[j]
+            tokenizer_manager = TokenizerManager(
+                model_idx, server_args, port_args, model_overide_args
             )
-            print(
-                f"Initialization failed. detoken_init_state: {detoken_init_state}",
-                flush=True,
+            tokenizer_managers[model].append(tokenizer_manager)
+            pipe_controller_reader, pipe_controller_writer = mp.Pipe(duplex=False)
+            pipe_detoken_reader, pipe_detoken_writer = mp.Pipe(duplex=False)
+
+            pipe_controller_list.append((pipe_controller_reader, pipe_controller_writer))
+            pipe_detoken_list.append((pipe_detoken_reader, pipe_detoken_writer))
+
+            if server_args.dp_size == 1:
+                start_process = start_controller_process_single
+            else:
+                start_process = start_controller_process_multi
+            proc_controller = mp.Process(
+                target=start_process,
+                args=(
+                    model_idx,
+                    server_args,
+                    port_args,
+                    pipe_controller_writer,
+                    model_overide_args,
+                ),
+                kwargs={
+                    "gpu_ids": [next(gpus)],
+                }
             )
-            sys.exit(1)
+            proc_controller.start()
+            proc_detoken = mp.Process(
+                target=start_detokenizer_process,
+                args=(
+                    i,
+                    server_args,
+                    port_args,
+                    pipe_detoken_writer,
+                ),
+            )
+            proc_detoken.start()
+
+            proc_controller_list.append(proc_controller)
+            proc_detoken_list.append(proc_detoken)
+
+            # Wait for the model to finish loading
+            controller_init_state = pipe_controller_reader.recv()
+            detoken_init_state = pipe_detoken_reader.recv()
+
+            if controller_init_state != "init ok" or detoken_init_state != "init ok":
+                proc_controller.kill()
+                proc_detoken.kill()
+                print(
+                    f"Initialization failed. controller_init_state: {controller_init_state}",
+                    flush=True,
+                )
+                print(
+                    f"Initialization failed. detoken_init_state: {detoken_init_state}",
+                    flush=True,
+                )
+                sys.exit(1)
 
     for proc_controller, proc_detoken in zip(proc_controller_list, proc_detoken_list):
         assert proc_controller.is_alive() and proc_detoken.is_alive()

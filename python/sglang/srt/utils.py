@@ -43,6 +43,7 @@ from triton.runtime.cache import (
     default_dump_dir,
     default_override_dir,
 )
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +143,11 @@ def get_available_gpu_memory(gpu_id, distributed=False):
         free_gpu_memory = tensor.item()
 
     return free_gpu_memory / (1 << 30)
+
+
+def get_num_gpus():
+    """Get the number of GPUs."""
+    return torch.cuda.device_count()
 
 
 def set_random_seed(seed: int) -> None:
@@ -719,3 +725,10 @@ def add_api_key_middleware(app, api_key):
         if request.headers.get("Authorization") != "Bearer " + api_key:
             return JSONResponse(content={"error": "Unauthorized"}, status_code=401)
         return await call_next(request)
+
+
+def roundrobin(iterable):
+    dq = deque(iterable)
+    while True:
+        yield dq[0]
+        dq.rotate(-1)

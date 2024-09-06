@@ -25,7 +25,9 @@ from typing import List, Optional, Union
 class ServerArgs:
     # Model and tokenizer
     model_paths: List[str]
+    max_model_replicas: Optional[List[int]] = None
     init_scheduled_models: Optional[List[str]] = None
+    init_scheduled_model_replicas: Optional[List[int]] = None
     inactivate_threshold: Optional[float] = None
     tokenizer_paths: Optional[List[str]] = None
     tokenizer_mode: str = "auto"
@@ -100,6 +102,12 @@ class ServerArgs:
 
         if self.init_scheduled_models is None:
             self.init_scheduled_models = self.model_paths
+        
+        if self.max_model_replicas is None:
+            self.max_model_replicas = [1] * len(self.model_paths)
+
+        if self.init_scheduled_model_replicas is None:
+            self.init_scheduled_model_replicas = self.max_model_replicas
 
         if self.served_model_names is None:
             self.served_model_names = self.model_paths
@@ -138,10 +146,22 @@ class ServerArgs:
             required=True,
         )
         parser.add_argument(
+            "--max-model-replicas",
+            nargs="+",
+            type=int,
+            help="The maximum number of replicas for each model.",
+        )
+        parser.add_argument(
             "--init-scheduled-models",
             nargs="+",
             type=str,
             help="The models to be initialized and scheduled at the beginning.",
+        )
+        parser.add_argument(
+            "--init-scheduled-model-replicas",
+            nargs="+",
+            type=int,
+            help="The number of replicas for each model to be initialized and scheduled at the beginning.",
         )
         parser.add_argument(
             "--inactivate-threshold",

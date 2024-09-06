@@ -46,6 +46,7 @@ class RequestFuncOutput:
     error: str = ""
     output_len: int = 0
     slo: float = 0.0
+    model: str = ""
 
 
 async def send_generate_request(
@@ -76,6 +77,7 @@ async def send_generate_request(
         output = RequestFuncOutput()
         output.prompt_len = req.prompt_len
         output.slo = req.slo
+        output.model = req.model
 
         ttft = 0.0
         st = time.perf_counter()

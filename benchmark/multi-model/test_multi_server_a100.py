@@ -16,11 +16,14 @@ DEFAULT_URL_FOR_E2E_TEST = "http://127.0.0.1:9157"
 DEFAULT_MODEL_NAMES_FOR_TEST = ["meta-llama/Llama-2-7b-chat-hf", "meta-llama/Llama-2-7b-hf"]
 SEED = 42
 DURATION = 60 * 5  # 5 minutes
+MEM_FRAC = 0.87
 
 def popen_launch_server(
     models: list[str],
     mem_frac: list[float],
+    max_model_replicas: list[int],
     init_scheduled_models: list[str],
+    init_scheduled_model_replicas: list[int],
     server_log_file: str,
     base_url: str,
     timeout: float,
@@ -30,6 +33,8 @@ def popen_launch_server(
     host = host[2:]
 
     mem_frac = [str(f) for f in mem_frac]
+    max_model_replicas = [str(r) for r in max_model_replicas]
+    init_scheduled_model_replicas = [str(r) for r in init_scheduled_model_replicas]
 
     command = [
         "python3",
@@ -37,20 +42,25 @@ def popen_launch_server(
         "sglang.launch_server",
         "--model-paths",
         *models,
+        "--max-model-replicas",
+        *max_model_replicas,
         "--host",
         host,
         "--port",
         port,
         "--disable-cuda-graph",
         "--disable-radix-cache",
-        "--load-format",
-        "dummy",
+        # "--load-format",
+        # "dummy",
         "--mem-fraction-statics",
         *mem_frac,
         "--init-scheduled-models",
         *init_scheduled_models,
+        "--init-scheduled-model-replicas",
+        *init_scheduled_model_replicas,
         "--log-file",
         server_log_file,
+        "--enable-abort",
         *other_args,
     ]
 
@@ -91,7 +101,9 @@ class TestMultiServer(unittest.TestCase):
     def run_test(self, 
                  models: list[str],
                  mem_frac: list[float],
+                 max_model_replicas: list[int],
                  init_scheduled_models: list[str],
+                 init_scheduled_model_replicas: list[int],
                  trace_config: TraceConfig,
                  debug: bool = False,
                  mode: str = None,
@@ -106,7 +118,9 @@ class TestMultiServer(unittest.TestCase):
         process = popen_launch_server(
             models=models,
             mem_frac=mem_frac,
+            max_model_replicas=max_model_replicas,
             init_scheduled_models=init_scheduled_models,
+            init_scheduled_model_replicas=init_scheduled_model_replicas,
             server_log_file=server_log_file,
             base_url=base_url,
             timeout=300,
@@ -132,10 +146,10 @@ class TestMultiServer(unittest.TestCase):
 
         return res
     
-    def run_swap_test(self, req_rate, cv, alpha, slo, swap_policy="baseline"):
+    def run_swap_test(self, req_rate, cv, alpha, slo, duration=DURATION, swap_policy="baseline"):
         trace_config = TraceConfig(
                 req_rate=req_rate,
-                duration=DURATION,
+                duration=duration,
                 input_range=[8, 1024],
                 output_range=[8, 512],
                 model_paths=DEFAULT_MODEL_NAMES_FOR_TEST,
@@ -147,20 +161,23 @@ class TestMultiServer(unittest.TestCase):
 
         res = self.run_test(
             models=DEFAULT_MODEL_NAMES_FOR_TEST,
-            mem_frac=[0.8, 0.8],
+            mem_frac=[MEM_FRAC, MEM_FRAC],
+            max_model_replicas=[2, 2],
             init_scheduled_models=[DEFAULT_MODEL_NAMES_FOR_TEST[0]],
+            init_scheduled_model_replicas=[2],
             trace_config=trace_config,
             mode=f"swap-{swap_policy}",
             other_args=("--inactivate-threshold", "15.0", "--swap-policy", swap_policy)
         )
 
         print(f"**** Finshed running swap test with trace config {trace_config} ****")
-        print(f"Request throughput: {res['request_throughput']}")
+        print(f"Request throughput: {res['request_throughput']:.2f}")
+        print(f"Token throughput: {res['input_output_throughput']:.2f}")
 
-    def run_collocate_test(self, req_rate, cv, alpha, slo):
+    def run_collocate_test(self, req_rate, cv, alpha, slo, duration=DURATION):
         trace_config = TraceConfig(
                 req_rate=req_rate,
-                duration=DURATION,
+                duration=duration,
                 input_range=[8, 1024],
                 output_range=[8, 512],
                 model_paths=DEFAULT_MODEL_NAMES_FOR_TEST,
@@ -170,9 +187,9 @@ class TestMultiServer(unittest.TestCase):
                 slo=slo,
             )
         # total_memory/model_weights need to be changed based on application
-        total_memory = 37.5
-        total_memory_ratio = 0.8
-        model_weights = [10, 10]
+        total_memory = 37.55
+        total_memory_ratio = MEM_FRAC
+        model_weights = [12.55, 12.55]
         kv_cache_memory = total_memory * total_memory_ratio - sum(model_weights)
         p1 = (1/2)**alpha
         p2 = 1 - p1
@@ -183,19 +200,21 @@ class TestMultiServer(unittest.TestCase):
         res = self.run_test(
             models=DEFAULT_MODEL_NAMES_FOR_TEST,
             mem_frac=mem_fracs,
+            max_model_replicas=[2, 2],
             init_scheduled_models=DEFAULT_MODEL_NAMES_FOR_TEST,
+            init_scheduled_model_replicas=[2, 2],
             trace_config=trace_config,
             mode="collocate",
         )
         print(f"**** Finshed running collocate test with trace config {trace_config} ****")
         print(f"Request throughput: {res['request_throughput']}")
 
-    def run_single_model_test(self, req_rate, cv, alpha, slo):
-        model_paths = [DEFAULT_MODEL_NAMES_FOR_TEST[0]]
+    def run_single_model_test(self, req_rate, cv, alpha, slo, duration=DURATION):
+        model_paths = DEFAULT_MODEL_NAMES_FOR_TEST
 
         trace_config = TraceConfig(
                 req_rate=req_rate,
-                duration=DURATION,
+                duration=duration,
                 input_range=[8, 1024],
                 output_range=[8, 512],
                 model_paths=model_paths,
@@ -206,43 +225,43 @@ class TestMultiServer(unittest.TestCase):
             )
             
         res = self.run_test(
-            models=model_paths,
-            mem_frac=[0.8],
-            init_scheduled_models=model_paths,
+            models=DEFAULT_MODEL_NAMES_FOR_TEST,
+            mem_frac=[MEM_FRAC, MEM_FRAC],
+            max_model_replicas=[1, 1],
+            init_scheduled_models=DEFAULT_MODEL_NAMES_FOR_TEST,
+            init_scheduled_model_replicas=[1, 1],
             trace_config=trace_config,
             mode="single-model"
         )
         print(f"**** Finshed running single model test of {model_paths} with trace config {trace_config} ****")
         print(f"Request throughput: {res['request_throughput']}")
+        print(f"Token throughput: {res['input_output_throughput']:.2f}")
+
 
     def test_swap_baseline(self):
-        req_rates = [1, 2, 4, 6, 8, 16]
+        req_rates = [16]
         for req_rate in req_rates:
-            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=60*2, swap_policy="baseline")
+            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=100, duration=60, swap_policy="baseline")
     
     def test_swap_enhanced(self):
-        req_rates = [1, 2, 4, 6, 8, 16]
+        req_rates = [16]
+
         for req_rate in req_rates:
-            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=60*2, swap_policy="enhanced")
+            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=100, duration=60, swap_policy="enhanced")
 
     def test_collocate(self):
-        req_rates = [12]
-        cv = 1
-        alphas = [0.1, 0.3, 1]
-        for req_rate in req_rates:
-            for alpha in alphas:
-                self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=60*2)
+        self.run_collocate_test(req_rate=16, cv=1, alpha=1, duration=60, slo=100)
 
         # req_rates = [0.6, 1, 2, 4, 8]
         # alphas = [0.1, 0.3, 0.6, 1]
         # for req_rate in req_rates:
         #     for alpha in alphas:
-        #         self.run_collocate_test(req_rate=req_rate, cv=1, alpha=alpha, slo=60*2)
+        #         self.run_collocate_test(req_rate=req_rate, cv=1, alpha=alpha, duration=60, slo=60*2)
 
     def test_single_model(self):
-        req_rates = [1, 2, 4, 6, 8, 16]
+        req_rates = [16]
         for req_rate in req_rates:
-            self.run_single_model_test(req_rate=req_rate, cv=1, alpha=1, slo=60*2)
+            self.run_single_model_test(req_rate=req_rate, cv=1, alpha=1, slo=100, duration=60)
 
     def test_all_one(self):
         req_rate = 1
@@ -263,25 +282,18 @@ class TestMultiServer(unittest.TestCase):
         self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, swap_policy="enhanced")
 
     def test_all(self):
-        req_rates = [12, 16, 20, 24]
+        req_rates = [1, 2, 4, 6, 8, 10]
         cv = 1
         alphas = [0.1, 0.3, 0.6, 1]
-        slos = [60*3]
+        slos = [100, 60*2, 60*3, None]
         for req_rate in req_rates:
             for alpha in alphas:
                 for slo in slos:
-                    if req_rate == 12 and alpha == 0.1:
-                        continue
-                    if req_rate == 12 and alpha == 0.3:
-                        continue
-                    if req_rate == 12 and alpha == 0.6:
-                        continue
-                    
                     print(f"**** Start test req_rate={req_rate}, cv={cv}, alpha={alpha} ****")
-                    # self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo, swap_policy="baseline")
+                    self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo, swap_policy="baseline")
                     self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo, swap_policy="enhanced")
-                    # self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo)
-                    # self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo)
+                    self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo)
+                    self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo)
 
         # req_rates = [1, 2, 4, 8, 16]
         # alpha = 1
