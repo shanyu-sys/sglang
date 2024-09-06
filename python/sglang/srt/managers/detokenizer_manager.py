@@ -25,7 +25,7 @@ import zmq
 import zmq.asyncio
 
 from sglang.srt.hf_transformers_utils import get_tokenizer
-from sglang.srt.managers.io_struct import AlterModelOut, BatchStrOut, BatchTokenIDOut
+from sglang.srt.managers.io_struct import AlterModelOut, BatchStrOut, BatchTokenIDOut, BatchAbortReq
 from sglang.srt.managers.schedule_batch import FINISH_MATCHED_STR
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.utils import find_printable_text, get_exception_traceback, graceful_registry
@@ -69,8 +69,8 @@ class DetokenizerManager:
             recv_obj = await self.recv_from_router.recv_pyobj()
             if isinstance(recv_obj, BatchTokenIDOut):
                 self.handle_generation_requests(recv_obj)
-            elif isinstance(recv_obj, AlterModelOut):
-                self.handle_alter_model(recv_obj)
+            elif isinstance(recv_obj, (AlterModelOut, BatchAbortReq)):
+                self.direct_send(recv_obj)
             else:
                 raise ValueError(f"Unknown message type: {type(recv_obj)}")
 
@@ -145,8 +145,7 @@ class DetokenizerManager:
             )
         )
 
-    def handle_alter_model(self, recv_obj: AlterModelOut):
-        # print(f"{recv_obj} Received and Sent to tokenizer from detokenizer")
+    def direct_send(self, recv_obj):
         self.send_to_tokenizer.send_pyobj(recv_obj)
 
 

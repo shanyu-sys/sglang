@@ -31,6 +31,7 @@ from sglang.srt.constrained.jump_forward import JumpForwardCache
 from sglang.srt.hf_transformers_utils import get_processor, get_tokenizer
 from sglang.srt.managers.io_struct import (
     AbortReq,
+    BatchAbortReq,
     ActivateReq,
     AlterModelOut,
     BatchTokenIDOut,

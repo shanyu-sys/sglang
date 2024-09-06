@@ -46,6 +46,7 @@ from sglang.srt.managers.io_struct import (
     FlushCacheReq,
     GenerateReqInput,
     TokenizedGenerateReqInput,
+    BatchAbortReq,
 )
 from sglang.srt.mm_utils import expand2square, process_anyres_image
 from sglang.srt.sampling_params import SamplingParams
@@ -469,7 +470,7 @@ class TokenizerManager:
         if self.to_create_loop:
             # assert that the activate response will not be batched with other generation responses
             recv_obj = await asyncio.wait_for(
-                self.recv_from_detokenizer.recv_pyobj(), timeout=40
+                self.recv_from_detokenizer.recv_pyobj(), timeout=100
             )
             return
         else:
@@ -575,6 +576,8 @@ class TokenizerManager:
                 self._handle_generate_response(recv_obj)
             elif isinstance(recv_obj, AlterModelOut):
                 self._handle_alter_model_response(recv_obj)
+            elif isinstance(recv_obj, BatchAbortReq):
+                self._handle_abort_response(recv_obj)
             else:
                 raise ValueError(f"Unknown message type: {type(recv_obj)}")
 
@@ -609,6 +612,20 @@ class TokenizerManager:
             out_dict = {
                 "success": recv_obj.success,
                 "alter_type": alter_type,
+            }
+            state.out_list.append(out_dict)
+            state.finished = True
+            state.event.set()
+    
+    def _handle_abort_response(self, recv_obj: BatchAbortReq):
+        for req_id in recv_obj.reqs:
+            state = self.rid_to_state.get(req_id, None)
+
+            if state is None:
+                continue
+
+            out_dict = {
+                "abort": True,
             }
             state.out_list.append(out_dict)
             state.finished = True
