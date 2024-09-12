@@ -27,9 +27,9 @@ import os
 import sys
 import threading
 import time
+from collections import defaultdict
 from http import HTTPStatus
 from typing import Dict, List, Optional, Union
-from collections import defaultdict
 
 # Fix a bug of Python threading
 setattr(threading, "_register_atexit", lambda *args, **kwargs: None)
@@ -73,12 +73,12 @@ from sglang.srt.utils import (
     allocate_init_ports,
     assert_pkg_version,
     enable_show_time_cost,
+    get_num_gpus,
     kill_child_process,
     maybe_set_triton_cache_manager,
+    roundrobin,
     set_torch_compile_config,
     set_ulimit,
-    get_num_gpus,
-    roundrobin,
 )
 from sglang.utils import get_exception_traceback
 
@@ -182,8 +182,8 @@ def launch_server(
     logging.basicConfig(
         filename=server_args.log_file,
         filemode="a",
-        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-        datefmt='%H:%M:%S',
+        format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
         level=getattr(logging, server_args.log_level.upper()),
         # format="%(message)s",
     )
@@ -260,7 +260,9 @@ def launch_server(
             pipe_controller_reader, pipe_controller_writer = mp.Pipe(duplex=False)
             pipe_detoken_reader, pipe_detoken_writer = mp.Pipe(duplex=False)
 
-            pipe_controller_list.append((pipe_controller_reader, pipe_controller_writer))
+            pipe_controller_list.append(
+                (pipe_controller_reader, pipe_controller_writer)
+            )
             pipe_detoken_list.append((pipe_detoken_reader, pipe_detoken_writer))
 
             if server_args.dp_size == 1:
@@ -278,7 +280,7 @@ def launch_server(
                 ),
                 kwargs={
                     "gpu_ids": [next(gpus)],
-                }
+                },
             )
             proc_controller.start()
             proc_detoken = mp.Process(

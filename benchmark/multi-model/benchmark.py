@@ -3,23 +3,22 @@ import asyncio
 import json
 import os
 import random
+import resource
+import sys
 import time
+import traceback
+import warnings
+from dataclasses import dataclass, field
+from datetime import datetime
 from trace import Request, TraceConfig, generate_synthetic_reqs
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import aiohttp
 import numpy as np
 import tqdm
+from exp_suite import get_all_suites
 from tqdm.asyncio import tqdm
 from transformers import AutoTokenizer
-from exp_suite import get_all_suites
-from dataclasses import dataclass, field
-import warnings
-from datetime import datetime
-import sys
-import traceback
-import resource
-
 
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 
@@ -126,8 +125,10 @@ async def send_generate_request(
         pbar.update(1)
     return output
 
+
 def remove_prefix(text: str, prefix: str) -> str:
     return text[len(prefix) :] if text.startswith(prefix) else text
+
 
 async def benchmark(
     backend: str,
@@ -164,14 +165,16 @@ async def benchmark(
                 f"Req {req.req_id} for model {req.model} waited {sleep_time:.2f} before sending to server."
             )
 
-        task = asyncio.create_task(send_generate_request(backend, server, req, pbar=pbar))
+        task = asyncio.create_task(
+            send_generate_request(backend, server, req, pbar=pbar)
+        )
         tasks.append(task)
 
     outputs: List[RequestFuncOutput] = await asyncio.gather(*tasks)
 
     if pbar is not None:
         pbar.close()
-    
+
     benchmark_duration = time.perf_counter() - benchmark_start_time
 
     metrics = calculate_metrics(
@@ -189,7 +192,7 @@ async def benchmark(
             model_to_outputs[req.model] = []
         model_to_input_requests[req.model].append(req)
         model_to_outputs[req.model].append(outputs[i])
-    
+
     model_to_metrics = {}
     for model, reqs in model_to_input_requests.items():
         model_outputs = model_to_outputs[model]
@@ -242,9 +245,7 @@ async def benchmark(
         )
     )
     print(
-        "{:<40} {:<10.2f}".format(
-            "P99 E2E Latency (ms):", metrics.p99_e2e_latency_ms
-        )
+        "{:<40} {:<10.2f}".format("P99 E2E Latency (ms):", metrics.p99_e2e_latency_ms)
     )
 
     print("{s:{c}^{n}}".format(s="Each Model Metrics", n=50, c="-"))
@@ -252,11 +253,32 @@ async def benchmark(
         print(f"*** Model: {model} ***")
         print("{:<40} {:<10}".format("Successful requests:", model_metrics.completed))
         print("{:<40} {:<10}".format("Aborted requests:", model_metrics.aborted))
-        print("{:<40} {:<10.2f}".format("Average Attainment:", model_metrics.average_attainment))
-        print("{:<40} {:<10.2f}".format("Request throughput (req/s):", model_metrics.request_throughput))
-        print("{:<40} {:<10.2f}".format("Input token throughput (tok/s):", model_metrics.input_throughput))
-        print("{:<40} {:<10.2f}".format("Output token throughput (tok/s):", model_metrics.output_throughput))
-        print("{:<40} {:<10.2f}".format("Input + Output token throughput (tok/s):", model_metrics.input_output_throughput))
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Average Attainment:", model_metrics.average_attainment
+            )
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Request throughput (req/s):", model_metrics.request_throughput
+            )
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Input token throughput (tok/s):", model_metrics.input_throughput
+            )
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Output token throughput (tok/s):", model_metrics.output_throughput
+            )
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Input + Output token throughput (tok/s):",
+                model_metrics.input_output_throughput,
+            )
+        )
 
         print(
             "{:<40} {:<10.2f}".format(
@@ -474,23 +496,23 @@ def run_benchmark(args_: argparse.Namespace, trace_config):
             print(req)
 
     # benchmark
-    results = asyncio.run(benchmark(
-        backend=args.backend,
-        input_requests=requests,
-        server=server,
-        request_rate=trace_config.req_rate,
-        alpha=trace_config.alpha,
-        cv=trace_config.cv,
-        request_duration=trace_config.duration,
-        debug=args.debug,
-        disable_tqdm=args.disable_tqdm,
-    ))
+    results = asyncio.run(
+        benchmark(
+            backend=args.backend,
+            input_requests=requests,
+            server=server,
+            request_rate=trace_config.req_rate,
+            alpha=trace_config.alpha,
+            cv=trace_config.cv,
+            request_duration=trace_config.duration,
+            debug=args.debug,
+            disable_tqdm=args.disable_tqdm,
+        )
+    )
     if not os.path.exists(args.results_path):
         os.makedirs(args.results_path)
 
-    output_file_name = get_output_file_name(
-        trace_config, args.mode
-    )
+    output_file_name = get_output_file_name(trace_config, args.mode)
     output = os.path.join(args.results_path, output_file_name)
 
     with open(output, "a") as f:
@@ -554,16 +576,14 @@ if __name__ == "__main__":
     # parser.add_argument("--exp-name", type=str, choices=["changing_req_rate", "changing_cv", "changing_alpha", "one"], default="one")
     parser.add_argument("--disable-tqdm", action="store_true")
 
-
     args = parser.parse_args()
 
     # all_trace_configs = get_all_suites(args.model_paths, seed=42)
     # print(f"Total number of experiments: {len(all_trace_configs)}")
     # for exp, trace_config in all_trace_configs:
     #     if exp == args.exp_name:
-        #     print(f"Running experiment {exp} with config {trace_config.__dict__}")
-        #     run_benchmark(args, trace_config)
- 
+    #     print(f"Running experiment {exp} with config {trace_config.__dict__}")
+    #     run_benchmark(args, trace_config)
 
     trace_config = TraceConfig(
         req_rate=4,  # 2 requests per second

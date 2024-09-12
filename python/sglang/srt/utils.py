@@ -24,6 +24,7 @@ import resource
 import socket
 import struct
 import time
+from collections import deque
 from importlib.metadata import PackageNotFoundError, version
 from io import BytesIO
 from typing import List, Optional
@@ -43,7 +44,6 @@ from triton.runtime.cache import (
     default_dump_dir,
     default_override_dir,
 )
-from collections import deque
 
 logger = logging.getLogger(__name__)
 

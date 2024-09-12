@@ -18,13 +18,13 @@ The definition of objects transfered between different
 processes (TokenizerManager, DetokenizerManager, Controller).
 """
 
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
 from sglang.srt.managers.schedule_batch import BaseFinishReason
 from sglang.srt.sampling_params import SamplingParams
-import time
 
 
 @dataclass
@@ -73,7 +73,9 @@ class GenerateReqInput:
             else:
                 is_single = isinstance(self.input_ids[0], int)
         self.is_single = is_single
-        self.arrival_time = self.arrival_time if self.arrival_time is not None else time.time()
+        self.arrival_time = (
+            self.arrival_time if self.arrival_time is not None else time.time()
+        )
         if self.slo is None:
             self.slo = float("inf")
 
@@ -215,10 +217,12 @@ class FlushCacheReq:
 class AbortReq:
     rid: str
 
+
 class BatchAbortReq:
     def __init__(self, req_ids, meta_info):
         self.reqs: List[str] = req_ids
         self.meta_info: List[Dict] = meta_info
+
 
 @dataclass
 class DetokenizeReqInput:

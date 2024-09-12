@@ -31,9 +31,9 @@ from sglang.srt.constrained.jump_forward import JumpForwardCache
 from sglang.srt.hf_transformers_utils import get_processor, get_tokenizer
 from sglang.srt.managers.io_struct import (
     AbortReq,
-    BatchAbortReq,
     ActivateReq,
     AlterModelOut,
+    BatchAbortReq,
     BatchTokenIDOut,
     DeactivateReq,
     FlushCacheReq,
@@ -266,7 +266,9 @@ class ModelTpServer:
 
         if new_batch is not None:
             if not self.model_runner._activated:
-                raise ValueError(f"{self.model_name} model_runner is not activated, but new_batch for prefill is not None")
+                raise ValueError(
+                    f"{self.model_name} model_runner is not activated, but new_batch for prefill is not None"
+                )
             # Run a new prefill batch
             self.forward_prefill_batch(new_batch)
             self.cache_filled_batch(new_batch)
@@ -281,7 +283,9 @@ class ModelTpServer:
             # Run a decode batch
             if self.running_batch is not None:
                 if not self.model_runner._activated:
-                    raise ValueError(f"{self.model_name} model_runner is not activated, but running_batch is not None")
+                    raise ValueError(
+                        f"{self.model_name} model_runner is not activated, but running_batch is not None"
+                    )
                 # Run a few decode batches continuously for reducing overhead
                 for _ in range(global_config.num_continue_decode_steps):
                     self.num_generated_tokens += len(self.running_batch.reqs)
@@ -343,8 +347,13 @@ class ModelTpServer:
         recv_req: TokenizedGenerateReqInput,
     ):
         assert self._activated, "ModelTpServer has not been activated"
-        req = Req(recv_req.rid, recv_req.input_text, recv_req.input_ids,
-                  recv_req.arrival_time, recv_req.slo)
+        req = Req(
+            recv_req.rid,
+            recv_req.input_text,
+            recv_req.input_ids,
+            recv_req.arrival_time,
+            recv_req.slo,
+        )
         req.pixel_values = recv_req.pixel_values
         if req.pixel_values is not None:
             req.pad_value = [
@@ -426,7 +435,9 @@ class ModelTpServer:
             req.last_node = last_node
 
         # Abort requests
-        self.waiting_queue = [x for x in self.waiting_queue if x not in self._abort_req_list]
+        self.waiting_queue = [
+            x for x in self.waiting_queue if x not in self._abort_req_list
+        ]
 
         # Get priority queue
         self.waiting_queue = self.scheduler.get_priority_queue(self.waiting_queue)
@@ -759,7 +770,7 @@ class ModelTpServer:
                     req.output_top_logprobs.append(output.output_top_logprobs[i])
 
         self.handle_finished_requests(batch)
-    
+
     def handle_abort_requests(self):
         req_id_list = []
         meta_data_list = []
@@ -772,9 +783,7 @@ class ModelTpServer:
             meta_data_list.append(meta_data)
 
         if req_id_list:
-            self.out_pyobjs.append(
-                BatchAbortReq(req_id_list, meta_data_list)
-            )
+            self.out_pyobjs.append(BatchAbortReq(req_id_list, meta_data_list))
         self._abort_req_list = []
 
     def handle_finished_requests(self, batch: Batch):

@@ -102,7 +102,7 @@ class ServerArgs:
 
         if self.init_scheduled_models is None:
             self.init_scheduled_models = self.model_paths
-        
+
         if self.max_model_replicas is None:
             self.max_model_replicas = [1] * len(self.model_paths)
 

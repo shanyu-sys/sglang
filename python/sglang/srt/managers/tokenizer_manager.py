@@ -40,13 +40,13 @@ from sglang.srt.managers.io_struct import (
     AbortReq,
     ActivateReq,
     AlterModelOut,
+    BatchAbortReq,
     BatchStrOut,
     BatchTokenIDOut,
     DeactivateReq,
     FlushCacheReq,
     GenerateReqInput,
     TokenizedGenerateReqInput,
-    BatchAbortReq,
 )
 from sglang.srt.mm_utils import expand2square, process_anyres_image
 from sglang.srt.sampling_params import SamplingParams
@@ -616,7 +616,7 @@ class TokenizerManager:
             state.out_list.append(out_dict)
             state.finished = True
             state.event.set()
-    
+
     def _handle_abort_response(self, recv_obj: BatchAbortReq):
         for req_id, meta_info in zip(recv_obj.reqs, recv_obj.meta_info):
             state = self.rid_to_state.get(req_id, None)

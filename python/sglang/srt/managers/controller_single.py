@@ -150,7 +150,9 @@ def start_controller_process(
     if not is_data_parallel_worker:
         if not gpu_ids:
             tp_size_local = server_args.tp_size // server_args.nnodes
-            gpu_ids = [i for _ in range(server_args.nnodes) for i in range(tp_size_local)]
+            gpu_ids = [
+                i for _ in range(server_args.nnodes) for i in range(tp_size_local)
+            ]
         else:
             # todo: support both tp and multi-model collocation
             gpu_ids = gpu_ids
