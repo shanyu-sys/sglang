@@ -180,10 +180,32 @@ async def benchmark(
         dur_s=benchmark_duration,
     )
 
+    # split requests according to model
+    model_to_input_requests = {}
+    model_to_outputs = {}
+    for i, req in enumerate(input_requests):
+        if req.model not in model_to_input_requests:
+            model_to_input_requests[req.model] = []
+            model_to_outputs[req.model] = []
+        model_to_input_requests[req.model].append(req)
+        model_to_outputs[req.model].append(outputs[i])
+    
+    model_to_metrics = {}
+    for model, reqs in model_to_input_requests.items():
+        model_outputs = model_to_outputs[model]
+        model_metrics = calculate_metrics(
+            input_requests=reqs,
+            outputs=model_outputs,
+            dur_s=benchmark_duration,
+        )
+        model_to_metrics[model] = model_metrics
+
     print("\n{s:{c}^{n}}".format(s=" Serving Benchmark Result ", n=50, c="="))
     print("{:<40} {:<10}".format("Traffic request rate:", request_rate))
     print("{:<40} {:<10}".format("Alpha:", alpha))
     print("{:<40} {:<10}".format("CV:", cv))
+    print("{:<40} {:<10}".format("SLO:", test_req.slo))
+    print("{:<40} {:<10.2f}".format("Average Attainment:", metrics.average_attainment))
     print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
     print("{:<40} {:<10}".format("Aborted requests:", metrics.aborted))
     print("{:<40} {:<10.2f}".format("Benchmark duration (s):", benchmark_duration))
@@ -224,11 +246,33 @@ async def benchmark(
             "P99 E2E Latency (ms):", metrics.p99_e2e_latency_ms
         )
     )
-    print(
-        "{:<40} {:<10.2f}".format(
-            "Average Attainment:", metrics.average_attainment
+
+    print("{s:{c}^{n}}".format(s="Each Model Metrics", n=50, c="-"))
+    for model, model_metrics in model_to_metrics.items():
+        print(f"*** Model: {model} ***")
+        print("{:<40} {:<10}".format("Successful requests:", model_metrics.completed))
+        print("{:<40} {:<10}".format("Aborted requests:", model_metrics.aborted))
+        print("{:<40} {:<10.2f}".format("Average Attainment:", model_metrics.average_attainment))
+        print("{:<40} {:<10.2f}".format("Request throughput (req/s):", model_metrics.request_throughput))
+        print("{:<40} {:<10.2f}".format("Input token throughput (tok/s):", model_metrics.input_throughput))
+        print("{:<40} {:<10.2f}".format("Output token throughput (tok/s):", model_metrics.output_throughput))
+        print("{:<40} {:<10.2f}".format("Input + Output token throughput (tok/s):", model_metrics.input_output_throughput))
+
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Mean E2E Latency (ms):", model_metrics.mean_e2e_latency_ms
+            )
         )
-    )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "Median E2E Latency (ms):", model_metrics.median_e2e_latency_ms
+            )
+        )
+        print(
+            "{:<40} {:<10.2f}".format(
+                "P99 E2E Latency (ms):", model_metrics.p99_e2e_latency_ms
+            )
+        )
     # print("{s:{c}^{n}}".format(s="Time to First Token", n=50, c="-"))
     # print("{:<40} {:<10.2f}".format("Mean TTFT (ms):", metrics.mean_ttft_ms))
     # print("{:<40} {:<10.2f}".format("Median TTFT (ms):", metrics.median_ttft_ms))
@@ -289,6 +333,19 @@ async def benchmark(
             # "itls": [output.itl for output in outputs],
             # "errors": [output.error for output in outputs],
         }
+        for model, model_metrics in model_to_metrics.items():
+            result[model] = {
+                "completed": model_metrics.completed,
+                "aborted": model_metrics.aborted,
+                "request_throughput": model_metrics.request_throughput,
+                "input_throughput": model_metrics.input_throughput,
+                "output_throughput": model_metrics.output_throughput,
+                "input_output_throughput": model_metrics.input_output_throughput,
+                "mean_e2e_latency_ms": model_metrics.mean_e2e_latency_ms,
+                "median_e2e_latency_ms": model_metrics.median_e2e_latency_ms,
+                "p99_e2e_latency_ms": model_metrics.p99_e2e_latency_ms,
+                "average_attainment": model_metrics.average_attainment,
+            }
         return result
     else:
         print(f"Error running benchmark for request rate: {request_rate}")
