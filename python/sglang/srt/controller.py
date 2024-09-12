@@ -52,10 +52,10 @@ class RequestWrapper:
 
     def _get_min_schedule_time(self, obj: GenerateReqInput):
         slo = obj.slo
-        cool_down_time = 55 # wait ongoing requests to finish
-        swap_out_time = 7
+        cool_down_time = 60 # wait ongoing requests to finish
+        swap_out_time = 5
         swap_in_time = 5
-        e2e_latency = 15
+        e2e_latency = 30
         if slo is None:
             min_schedule_time = float("inf")
         else:
@@ -132,18 +132,34 @@ class Controller:
         self.model_queues[model].append(request_wrapper)
         logger.info(f"Request {obj.rid} is put into the queue of model {model}.")
 
+        t0 = time.time()
         send_future = await request_wrapper.send_to_tokenizer_manager
         t1 = time.time()
         logger.debug(f"Request {obj.rid} is sent to the tokenizer manager of model {model}.")
-    
+        wait_in_controller = t1 - t0
+
         try:
             ret = await send_future
             logger.info(f"Request {obj.rid} is finished processing by model {model}. Processed in {time.time()-t1:.2f} seconds.")
             if "abort" in ret:
+                logger.warning(f"Request {obj.rid} was aborted. Waited {wait_in_controller:.2f}s in controller queue."
+                            f" Time waited in worker queue: {ret['meta_info']['abort_time'] - t1:.2f}s")
                 return JSONResponse(
                     {"error": {"message": "Request aborted."}},
                     status_code=HTTPStatus.REQUEST_TIMEOUT
                 )
+            init_schedule_time = ret["meta_info"]["init_schedule_time"]
+            wait_in_tokenizer_manager = init_schedule_time - t1
+            output_len = ret["meta_info"]["completion_tokens"]
+            tokenizer_process_time = time.time() - t1
+            computation_time = ret["meta_info"]["finish_time"] - init_schedule_time
+            finish_to_controller = time.time() - ret["meta_info"]["finish_time"]
+            logger.info(f"Request {obj.rid} with {output_len} output tokens is finished. " 
+                        f"Time waited in controller queue: {wait_in_controller:.2f}s; "
+                        f"Time waited in worker queue: {wait_in_tokenizer_manager:.2f}s; "
+                        f"Computation time: {computation_time:.2f}s; "
+                        f"From finish back to controller time: {finish_to_controller:.2f}s ")
+
             return ret
         except asyncio.CancelledError:
             logger.warning(f"Request {obj.rid} was cancelled because it exceeded SLO.")
@@ -188,11 +204,14 @@ class Controller:
 
     def _get_active_models(self):
         active_models = []
-        for model, sts in self.model_status.items():
-            for st in sts:
-                if st == ModelStatus.ACTIVE:
-                    active_models.append(model)
-                    break
+        for model in self.model_status:
+            if self._get_model_status(model) == ModelStatus.ACTIVE:
+                active_models.append(model)
+        # for model, sts in self.model_status.items():
+        #     for st in sts:
+        #         if st == ModelStatus.ACTIVE:
+        #             active_models.append(model)
+        #             break
         return active_models
     
     def _get_model_status(self, model):
@@ -231,6 +250,7 @@ class Controller:
                 if if_should_switch_on:
                     try:
                         await self.switch_on_model(model, replica_indices)
+                        await asyncio.sleep(0)
                     except Exception as e:
                         logger.error(f"Error in switch_on_model: {e}")
                         raise e
@@ -241,6 +261,7 @@ class Controller:
                 if if_should_switch_off:
                     try:
                         await self.switch_off_model(model, replica_indices)
+                        await asyncio.sleep(0)
                     except Exception as e:
                         logger.error(f"Error in switch_off_model: {e}")
                         raise e
@@ -312,7 +333,8 @@ class Controller:
         return False, []
 
     async def switch_off_model(self, model, replica_indices):
-        logger.info(f"[time={time.time():.2f}] Prepare to switch off model {model}")
+        queue = self.model_queues[model]
+        logger.info(f"[time={time.time():.2f}] Prepare to switch off model {model}. Queue size is {len(queue)}")
         tasks = []
         for idx in replica_indices:
         #     tasks.append(self.switch_off_model_replica(model, idx, n_replicas=len(replica_indices)))
@@ -327,7 +349,8 @@ class Controller:
             except Exception as e:
                 logger.error(f"Error in switching off model {model}: {e}")
                 raise e
-        logger.info(f"[time={time.time():.2f}] Model {model} is switched off.")
+            assert len(self.model_unfinished_requests[model][idx]) == 0
+        logger.info(f"[time={time.time():.2f}] Model {model} is switched off. Queue size is {len(queue)}.")
         return tasks
 
     async def switch_off_model_replica(self, model, idx, n_replicas):
@@ -335,12 +358,13 @@ class Controller:
         logger.info(f"Switching off replica {idx} of model {model}")
         self.model_status[model][idx] = ModelStatus.IN_TRANSIT
         tokenizer_manager = self.tokenizer_managers[model][idx]
+        num_unfinished_reqs = len(self.model_unfinished_requests[model][idx])
         # wait for all requests finish
         while len(self.model_unfinished_requests[model][idx]) > 0:
             await asyncio.sleep(0)
         
         t2 = time.time()
-        logger.info(f"[time={time.time():.2f}] Start switching off replica {idx} of model {model}. Waited {t2-t1:.2f} seconds for ongoing requests to finish.")
+        logger.info(f"[time={time.time():.2f}] Start switching off replica {idx} of model {model}. Waited {t2-t1:.2f} seconds for {num_unfinished_reqs} ongoing requests to finish.")
 
         async with self._available_memory_lock:
             try:     
@@ -365,8 +389,11 @@ class Controller:
         ]
         if len(queue) > 0:
             min_schedule_time = queue[0].min_schedule_time
+            arrival_time = queue[0].arrival_time
+            waiting_time = time.time() - arrival_time
+            # todo, the end_to_end latency will change according to the queue size.
             if time.time() > min_schedule_time:
-                logger.info(f"[time={time.time():.2f}] Switch on model {model}, since min_schedule_time {min_schedule_time} is reached.")
+                logger.info(f"[time={time.time():.2f}] Switch on model {model}, since min_schedule_time is reached. Head of queue request has been waiting for {waiting_time:.2f} seconds.")
 
                 return True, model_indices
 
@@ -398,8 +425,9 @@ class Controller:
         return victim_model, victim_replicas
 
     async def switch_on_model(self, model, replica_indices):
-        print("in switch_on_model")
-        logger.info(f"[time={time.time():.2f}] Prepare to switch on model {model}")
+        queue = self.model_queues[model]
+        # print("in switch_on_model")
+        logger.info(f"[time={time.time():.2f}] Prepare to switch on model {model}, queue size {len(queue)}")
         # TODO: switch off multiple models until enough memory is available
         if self._available_memory < self._memory_needed:
             victim_model, victim_replicas = self.get_victim_model_replicas()
@@ -409,6 +437,8 @@ class Controller:
                 logger.error(f"Error in switching off model {victim_model}: {e}")
                 raise e
 
+        t0 = time.time()
+        logger.info(f"[time={time.time():.2f}] Switching on model {model}, queue size {len(queue)}")
         for idx in replica_indices:
             self.model_status[model][idx] = ModelStatus.IN_TRANSIT
 
@@ -427,6 +457,7 @@ class Controller:
             
             logger.info(f"Replica {idx} of model {model} is switched on. It took {time.time()-t1:.2f} seconds.")
         self.model_inactive_start_time[model] = 0
+        logger.info(f"[time={time.time():.2f}] Model {model} is switched on. It took {time.time()-t0:.2f} seconds. Queue size is {len(queue)}. Model status {self.model_status[model]}, get_active_models: {self._get_active_models()}")
         return out
 
     def should_expand_memory_pool(self, model, queue):
