@@ -580,6 +580,11 @@ class ModelTpServer:
                 f"#queue-req: {len(self.waiting_queue) - len(can_run_list) + take_inflight}"
             )
 
+        # Set the init_schedule_time for the new batch
+        for req in can_run_list:
+            req.set_init_schedule_time()
+            assert req.init_schedule_time is not None
+
         # Return the new batch
         new_batch = Batch.init_new(
             can_run_list,
@@ -757,12 +762,18 @@ class ModelTpServer:
     
     def handle_abort_requests(self):
         req_id_list = []
+        meta_data_list = []
         for req in self._abort_req_list:
             req.finished_reason = FINISH_ABORT()
             req_id_list.append(req.rid)
+            meta_data = {
+                "abort_time": time.time(),
+            }
+            meta_data_list.append(meta_data)
+
         if req_id_list:
             self.out_pyobjs.append(
-                BatchAbortReq(req_id_list)
+                BatchAbortReq(req_id_list, meta_data_list)
             )
         self._abort_req_list = []
 
@@ -811,6 +822,8 @@ class ModelTpServer:
                     "completion_tokens": len(req.output_ids),
                     "completion_tokens_wo_jump_forward": req.completion_tokens_wo_jump_forward,
                     "finish_reason": str(req.finished_reason),
+                    "init_schedule_time": req.init_schedule_time,
+                    "finish_time": time.time(),
                 }
                 if req.return_logprob:
                     (

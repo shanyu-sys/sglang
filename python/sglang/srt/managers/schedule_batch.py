@@ -16,6 +16,7 @@ limitations under the License.
 """Meta data for requests and batches"""
 
 import logging
+import time
 import warnings
 from dataclasses import dataclass
 from enum import IntEnum, auto
@@ -112,6 +113,7 @@ class Req:
         self.output_ids = []  # Each decode stage's output ids
         self.input_ids = None  # input_ids = origin_input_ids + output_ids
         self.arrival_time = arrival_time
+        self.init_schedule_time = None
         self.slo = slo
 
         # For incremental decoding
@@ -172,6 +174,9 @@ class Req:
     # whether request reached finished condition
     def finished(self) -> bool:
         return self.finished_reason is not None
+
+    def set_init_schedule_time(self):
+        self.init_schedule_time = time.time()
 
     # Based on https://github.com/vllm-project/vllm/blob/7a64d24aad69e4d2548aa0bf528d9fe63428ab01/vllm/transformers_utils/detokenizer.py#L194-L313
     def init_incremental_detokenize(self):

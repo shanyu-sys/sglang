@@ -252,7 +252,6 @@ def launch_server(
     for model_idx, model in enumerate(server_args.model_paths):
         port_args_list = port_args_dict[model_idx]
         for j in range(len(port_args_list)):
-            print(f"creating model {model_idx} replica {j} for model {model}")
             port_args = port_args_list[j]
             tokenizer_manager = TokenizerManager(
                 model_idx, server_args, port_args, model_overide_args

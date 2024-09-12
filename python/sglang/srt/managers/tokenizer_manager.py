@@ -618,7 +618,7 @@ class TokenizerManager:
             state.event.set()
     
     def _handle_abort_response(self, recv_obj: BatchAbortReq):
-        for req_id in recv_obj.reqs:
+        for req_id, meta_info in zip(recv_obj.reqs, recv_obj.meta_info):
             state = self.rid_to_state.get(req_id, None)
 
             if state is None:
@@ -626,6 +626,7 @@ class TokenizerManager:
 
             out_dict = {
                 "abort": True,
+                "meta_info": meta_info,
             }
             state.out_list.append(out_dict)
             state.finished = True

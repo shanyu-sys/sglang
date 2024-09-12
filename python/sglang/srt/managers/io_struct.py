@@ -216,8 +216,9 @@ class AbortReq:
     rid: str
 
 class BatchAbortReq:
-    def __init__(self, req_ids):
+    def __init__(self, req_ids, meta_info):
         self.reqs: List[str] = req_ids
+        self.meta_info: List[Dict] = meta_info
 
 @dataclass
 class DetokenizeReqInput:
