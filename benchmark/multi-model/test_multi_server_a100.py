@@ -16,7 +16,7 @@ DEFAULT_URL_FOR_E2E_TEST = "http://127.0.0.1:9157"
 DEFAULT_MODEL_NAMES_FOR_TEST = ["meta-llama/Llama-2-7b-chat-hf", "meta-llama/Llama-2-7b-hf"]
 SEED = 42
 DURATION = 60 * 5  # 5 minutes
-MEM_FRAC = 0.87
+MEM_FRAC = 0.83
 
 def popen_launch_server(
     models: list[str],
@@ -50,8 +50,8 @@ def popen_launch_server(
         port,
         "--disable-cuda-graph",
         "--disable-radix-cache",
-        # "--load-format",
-        # "dummy",
+        "--load-format",
+        "dummy",
         "--mem-fraction-statics",
         *mem_frac,
         "--init-scheduled-models",
@@ -144,6 +144,9 @@ class TestMultiServer(unittest.TestCase):
         finally:
             kill_child_process(process.pid)
 
+        print(f"Request throughput: {res['request_throughput']}")
+        print(f"Input/Output token throughput: {res['input_output_throughput']:.2f}")
+        print(f"Output token throughput: {res['output_throughput']:.2f}")
         return res
     
     def run_swap_test(self, req_rate, cv, alpha, slo, duration=DURATION, swap_policy="baseline"):
@@ -158,12 +161,16 @@ class TestMultiServer(unittest.TestCase):
                 cv=cv,
                 slo=slo,
             )
+        if alpha <=1 :
+            init_scheduled_models = [DEFAULT_MODEL_NAMES_FOR_TEST[0]]
+        else:
+            init_scheduled_models = [DEFAULT_MODEL_NAMES_FOR_TEST[1]]
 
         res = self.run_test(
             models=DEFAULT_MODEL_NAMES_FOR_TEST,
             mem_frac=[MEM_FRAC, MEM_FRAC],
             max_model_replicas=[2, 2],
-            init_scheduled_models=[DEFAULT_MODEL_NAMES_FOR_TEST[0]],
+            init_scheduled_models=init_scheduled_models,
             init_scheduled_model_replicas=[2],
             trace_config=trace_config,
             mode=f"swap-{swap_policy}",
@@ -171,8 +178,7 @@ class TestMultiServer(unittest.TestCase):
         )
 
         print(f"**** Finshed running swap test with trace config {trace_config} ****")
-        print(f"Request throughput: {res['request_throughput']:.2f}")
-        print(f"Token throughput: {res['input_output_throughput']:.2f}")
+        return res
 
     def run_collocate_test(self, req_rate, cv, alpha, slo, duration=DURATION):
         trace_config = TraceConfig(
@@ -189,7 +195,8 @@ class TestMultiServer(unittest.TestCase):
         # total_memory/model_weights need to be changed based on application
         total_memory = 37.55
         total_memory_ratio = MEM_FRAC
-        model_weights = [12.55, 12.55]
+        model_weights = [3.5, 9.5] # 8 layers, 24 layers
+        # model_weights = [12.55, 12.55]
         kv_cache_memory = total_memory * total_memory_ratio - sum(model_weights)
         p1 = (1/2)**alpha
         p2 = 1 - p1
@@ -207,7 +214,7 @@ class TestMultiServer(unittest.TestCase):
             mode="collocate",
         )
         print(f"**** Finshed running collocate test with trace config {trace_config} ****")
-        print(f"Request throughput: {res['request_throughput']}")
+        return res
 
     def run_single_model_test(self, req_rate, cv, alpha, slo, duration=DURATION):
         model_paths = DEFAULT_MODEL_NAMES_FOR_TEST
@@ -234,14 +241,63 @@ class TestMultiServer(unittest.TestCase):
             mode="single-model"
         )
         print(f"**** Finshed running single model test of {model_paths} with trace config {trace_config} ****")
-        print(f"Request throughput: {res['request_throughput']}")
-        print(f"Token throughput: {res['input_output_throughput']:.2f}")
-
+        return res
 
     def test_swap_baseline(self):
-        req_rates = [16]
-        for req_rate in req_rates:
-            self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=100, duration=60, swap_policy="baseline")
+        # req_rates = [32, 36, 40, 44, 48, 52, 56, 60]
+        # req_rates = [20, 24, 28, 32]
+        alphas = [2]
+        slos = [160]
+        for alpha in alphas:
+            for slo in slos:
+                if slo == 110:
+                    continue
+                last_output_tput = 0
+                last_input_output_tput = 0
+
+                if alpha == 0.3:
+                    req_rates = list(range(40, 60, 4))
+                elif alpha == 1:
+                    req_rates = list(range(32, 60, 4))
+                else:
+                    req_rates = list(range(24, 60, 4))
+                
+                # if slo != 120:
+                #     last_slo_req_rate = req_rate
+                #     for rq in req_rates:
+                #         if rq < last_slo_req_rate:
+                #             req_rates.remove(rq)
+
+                for req_rate in req_rates:
+                    print(f"Start running swap test with req_rate={req_rate}, cv=1, alpha={alpha}, slo={slo}")
+                    res = self.run_swap_test(req_rate=req_rate, cv=1, alpha=alpha, slo=slo, duration=60*3, swap_policy="baseline")
+                    output_tput = res["output_throughput"]
+                    input_output_tput = res["input_output_throughput"]
+                    average_attainment = res["average_attainment"]
+                    violate = False
+                    for model in DEFAULT_MODEL_NAMES_FOR_TEST:
+                        model_attainment = res[model]["average_attainment"]
+                        if model_attainment < 0.95:
+                            violate = True
+                    if violate:
+                        print(f"Violate Per model SLO with req_rate={req_rate}, cv=1, alpha={alpha}, slo={slo}")
+                        break
+                    if average_attainment < 0.95:
+                        print(f"Vilate SLO with req_rate={req_rate}, cv=1, alpha={alpha}, slo={slo}")
+                        break
+                    if output_tput < last_output_tput:
+                        print(f"Output throughput decrease with req_rate={req_rate}, cv=1, alpha={alpha}, slo={slo}")
+                        break
+                    last_output_tput = output_tput
+                    last_input_output_tput = input_output_tput
+
+    def test_swap_one(self):
+        req_rate = 40
+        alpha = 0.3
+        cv = 1
+        slo = 160
+        duration = 180
+        self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo, duration=duration, swap_policy="baseline")
     
     def test_swap_enhanced(self):
         req_rates = [16]
@@ -250,18 +306,47 @@ class TestMultiServer(unittest.TestCase):
             self.run_swap_test(req_rate=req_rate, cv=1, alpha=1, slo=100, duration=60, swap_policy="enhanced")
 
     def test_collocate(self):
-        self.run_collocate_test(req_rate=16, cv=1, alpha=1, duration=60, slo=100)
+        # self.run_collocate_test(req_rate=28, cv=1, alpha=0.1, duration=60, slo=100)
 
-        # req_rates = [0.6, 1, 2, 4, 8]
-        # alphas = [0.1, 0.3, 0.6, 1]
-        # for req_rate in req_rates:
-        #     for alpha in alphas:
-        #         self.run_collocate_test(req_rate=req_rate, cv=1, alpha=alpha, duration=60, slo=60*2)
+        # alphas = [1, 2, 4]
+        req_rates = range(16, 60, 4)
+        alphas = [0.3, 1, 2]
+        for alpha in alphas:
+            last_output_tput = 0
+            last_input_output_tput = 0
+            for req_rate in req_rates:
+                res = self.run_collocate_test(req_rate=req_rate, cv=1, alpha=alpha, slo=120)
+                output_tput = res["output_throughput"]
+                input_output_tput = res["input_output_throughput"]
+                average_attainment = res["average_attainment"]
+                if average_attainment < 0.95:
+                    print(f"Violate SLO with req_rate={req_rate}, cv=1, alpha={alpha}")
+                    break
+                if output_tput < last_output_tput:
+                    print(f"Output throughput decrease with req_rate={req_rate}, cv=1, alpha={alpha}")
+                    break
+                last_output_tput = output_tput
+                last_input_output_tput = input_output_tput
 
     def test_single_model(self):
-        req_rates = [16]
-        for req_rate in req_rates:
-            self.run_single_model_test(req_rate=req_rate, cv=1, alpha=1, slo=100, duration=60)
+        req_rates = range(16, 60, 4)
+        alphas = [0.3, 1, 2]
+        for alpha in alphas:
+            last_output_tput = 0
+            last_input_output_tput = 0
+            for req_rate in req_rates:
+                res = self.run_single_model_test(req_rate=req_rate, cv=1, alpha=alpha, slo=120)
+                output_tput = res["output_throughput"]
+                input_output_tput = res["input_output_throughput"]
+                average_attainment = res["average_attainment"]
+                if average_attainment < 0.95:
+                    print(f"Violate SLO with req_rate={req_rate}, cv=1, alpha={alpha}")
+                    break
+                if output_tput < last_output_tput:
+                    print(f"Output throughput decrease with req_rate={req_rate}, cv=1, alpha={alpha}")
+                    break
+                last_output_tput = output_tput
+                last_input_output_tput = input_output_tput
 
     def test_all_one(self):
         req_rate = 1
@@ -274,37 +359,11 @@ class TestMultiServer(unittest.TestCase):
         print(f"Start running single model test with req_rate={req_rate}, cv={cv}, alpha={alpha}")
         self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha)
 
-    def test_swap_one(self):
-        req_rate = 1
-        cv = 1
-        alpha = 0.1
-        self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, swap_policy="baseline")
-        self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, swap_policy="enhanced")
-
     def test_all(self):
-        req_rates = [1, 2, 4, 6, 8, 10]
-        cv = 1
-        alphas = [0.1, 0.3, 0.6, 1]
-        slos = [100, 60*2, 60*3, None]
-        for req_rate in req_rates:
-            for alpha in alphas:
-                for slo in slos:
-                    print(f"**** Start test req_rate={req_rate}, cv={cv}, alpha={alpha} ****")
-                    self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo, swap_policy="baseline")
-                    self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo, swap_policy="enhanced")
-                    self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo)
-                    self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha, slo=slo)
+        self.test_collocate()
+        self.test_single_model()
 
-        # req_rates = [1, 2, 4, 8, 16]
-        # alpha = 1
-        # cvs = [0.1, 2, 4]
-        # for req_rate in req_rates:
-        #     for cv in cvs:
-        #         print(f"**** Start test req_rate={req_rate}, cv={cv}, alpha={alpha} ****")
-        #         self.run_swap_test(req_rate=req_rate, cv=cv, alpha=alpha)
-        #         self.run_collocate_test(req_rate=req_rate, cv=cv, alpha=alpha)
-        #         self.run_single_model_test(req_rate=req_rate, cv=cv, alpha=alpha)
-        
+        # self.test_swap_baseline()
 
 if __name__ == "__main__":
     unittest.main()

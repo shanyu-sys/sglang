@@ -50,8 +50,8 @@ def popen_launch_server(
         port,
         "--disable-cuda-graph",
         "--disable-radix-cache",
-        # "--load-format",
-        # "dummy",
+        "--load-format",
+        "dummy",
         "--mem-fraction-statics",
         *mem_frac,
         "--init-scheduled-models",
@@ -259,7 +259,7 @@ class TestMultiServer(unittest.TestCase):
         #         self.run_collocate_test(req_rate=req_rate, cv=1, alpha=alpha, duration=60, slo=60*2)
 
     def test_single_model(self):
-        req_rates = [16]
+        req_rates = [28]
         for req_rate in req_rates:
             self.run_single_model_test(req_rate=req_rate, cv=1, alpha=1, slo=100, duration=60)
 
